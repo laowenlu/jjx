@@ -4,11 +4,15 @@ namespace Contracts.Domain.Database;
 
 public class WatchedAsset : BaseEntity
 {
+    public string ThsCode { get; set; } = string.Empty;
+
     public string Code { get; set; } = string.Empty;
 
     public string Name { get; set; } = string.Empty;
 
     public string SecurityType { get; set; } = string.Empty;
+
+    public string AssetType { get; set; } = string.Empty;
 
     public decimal? CurrentPrice { get; set; }
 

@@ -4,6 +4,7 @@ import type {
   AddWatchlistItemResponseDto,
   DrawdownPointDto,
   WatchlistItemSummaryDto,
+  WatchlistSearchCandidateDto,
 } from '@/api/AppDtos';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -99,17 +100,21 @@ const WatchlistChart = ({ series }: { series: DrawdownPointDto[] }) => {
 
 const HomeView = () => {
   const [items, setItems] = useState<WatchlistItemSummaryDto[]>([]);
-  const [selectedCode, setSelectedCode] = useState<string | null>(null);
+  const [selectedThsCode, setSelectedThsCode] = useState<string | null>(null);
   const [series, setSeries] = useState<DrawdownPointDto[]>([]);
   const [code, setCode] = useState('');
+  const [candidates, setCandidates] = useState<WatchlistSearchCandidateDto[]>([]);
+  const [selectedCandidate, setSelectedCandidate] = useState<WatchlistSearchCandidateDto | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isSearching, setIsSearching] = useState(false);
   const [isDetailLoading, setIsDetailLoading] = useState(false);
   const [feedback, setFeedback] = useState('');
   const [feedbackTone, setFeedbackTone] = useState<FeedbackTone>('default');
   const detailRequestCodeRef = useRef<string | null>(null);
+  const searchRequestCodeRef = useRef('');
 
-  const selectedItem = items.find((item) => item.Code === selectedCode) ?? null;
+  const selectedItem = items.find((item) => item.ThsCode === selectedThsCode) ?? null;
 
   const loadWatchlist = async () => {
     setIsLoading(true);
@@ -117,9 +122,9 @@ const HomeView = () => {
     try {
       const response = await WatchlistManager.GetWatchlist({});
       setItems(response.Items);
-      setSelectedCode((current) => current && response.Items.some((item) => item.Code === current)
+      setSelectedThsCode((current) => current && response.Items.some((item) => item.ThsCode === current)
         ? current
-        : response.Items[0]?.Code ?? null);
+        : response.Items[0]?.ThsCode ?? null);
     } catch {
       setFeedbackTone('error');
       setFeedback('加载监控列表失败。');
@@ -133,7 +138,49 @@ const HomeView = () => {
   }, []);
 
   useEffect(() => {
-    if (!selectedCode) {
+    const normalized = code.trim();
+    setSelectedCandidate((current) => current?.Code === normalized ? current : null);
+
+    if (normalized.length !== 6) {
+      setCandidates([]);
+      setIsSearching(false);
+      return;
+    }
+
+    searchRequestCodeRef.current = normalized;
+    setIsSearching(true);
+
+    const timeout = window.setTimeout(async () => {
+      try {
+        const response = await WatchlistManager.SearchWatchlistCandidates({ Query: normalized });
+        if (searchRequestCodeRef.current !== normalized) {
+          return;
+        }
+
+        setCandidates(response.Items);
+        if (response.Items.length === 1) {
+          setSelectedCandidate(response.Items[0]);
+        }
+      } catch {
+        if (searchRequestCodeRef.current !== normalized) {
+          return;
+        }
+
+        setCandidates([]);
+      } finally {
+        if (searchRequestCodeRef.current === normalized) {
+          setIsSearching(false);
+        }
+      }
+    }, 250);
+
+    return () => {
+      window.clearTimeout(timeout);
+    };
+  }, [code]);
+
+  useEffect(() => {
+    if (!selectedThsCode) {
       setSeries([]);
       return;
     }
@@ -141,10 +188,10 @@ const HomeView = () => {
     const loadDetail = async () => {
       setIsDetailLoading(true);
       setSeries([]);
-      detailRequestCodeRef.current = selectedCode;
+      detailRequestCodeRef.current = selectedThsCode;
 
       try {
-        const response = await WatchlistManager.GetWatchlistItemDetail({ Code: selectedCode });
+        const response = await WatchlistManager.GetWatchlistItemDetail({ ThsCode: selectedThsCode });
         if (!response.Success) {
           setFeedbackTone('error');
           setFeedback(response.Message);
@@ -152,13 +199,13 @@ const HomeView = () => {
           return;
         }
 
-        if (detailRequestCodeRef.current !== selectedCode) {
+        if (detailRequestCodeRef.current !== selectedThsCode) {
           return;
         }
 
         setSeries(response.DrawdownSeries);
       } catch {
-        if (detailRequestCodeRef.current !== selectedCode) {
+        if (detailRequestCodeRef.current !== selectedThsCode) {
           return;
         }
 
@@ -166,17 +213,23 @@ const HomeView = () => {
         setFeedback('加载回撤曲线失败。');
         setSeries([]);
       } finally {
-        if (detailRequestCodeRef.current === selectedCode) {
+        if (detailRequestCodeRef.current === selectedThsCode) {
           setIsDetailLoading(false);
         }
       }
     };
 
     void loadDetail();
-  }, [selectedCode]);
+  }, [selectedThsCode]);
 
   const handleAdd = async () => {
     if (isSubmitting) {
+      return;
+    }
+
+    if (!selectedCandidate) {
+      setFeedbackTone('error');
+      setFeedback(code.trim().length === 6 ? '请先从下拉候选中选择标的。' : '请输入 6 位代码。');
       return;
     }
 
@@ -184,17 +237,26 @@ const HomeView = () => {
     setFeedback('');
 
     try {
-      const response: AddWatchlistItemResponseDto = await WatchlistManager.AddWatchlistItem({ Code: code });
+      const response: AddWatchlistItemResponseDto = await WatchlistManager.AddWatchlistItem({
+        Code: selectedCandidate.Code,
+        ThsCode: selectedCandidate.ThsCode,
+        AssetType: selectedCandidate.AssetType,
+      });
       setFeedbackTone(response.Success || response.AlreadyExists ? 'default' : 'error');
       setFeedback(response.Message);
 
-      if (!response.Success || !response.Item) {
+      if (!response.Item) {
         return;
       }
 
-      setItems((current) => [response.Item!, ...current.filter((item) => item.Code !== response.Item!.Code)]);
-      setSelectedCode(response.Item.Code);
+      if (response.Success) {
+        setItems((current) => [response.Item!, ...current.filter((item) => item.ThsCode !== response.Item!.ThsCode)]);
+      }
+
+      setSelectedThsCode(response.Item.ThsCode);
       setCode('');
+      setCandidates([]);
+      setSelectedCandidate(null);
     } catch {
       setFeedbackTone('error');
       setFeedback('添加失败，请稍后重试。');
@@ -203,22 +265,22 @@ const HomeView = () => {
     }
   };
 
-  const handleDelete = async (targetCode: string) => {
+  const handleDelete = async (targetThsCode: string) => {
     try {
-      const response = await WatchlistManager.DeleteWatchlistItem({ Code: targetCode });
+      const response = await WatchlistManager.DeleteWatchlistItem({ ThsCode: targetThsCode });
       if (!response.Success) {
         setFeedbackTone('error');
         setFeedback(response.Message);
         return;
       }
 
-      const nextItems = items.filter((item) => item.Code !== targetCode);
+      const nextItems = items.filter((item) => item.ThsCode !== targetThsCode);
       setItems(nextItems);
       setFeedbackTone('default');
       setFeedback('删除成功');
 
-      if (selectedCode === targetCode) {
-        setSelectedCode(nextItems[0]?.Code ?? null);
+      if (selectedThsCode === targetThsCode) {
+        setSelectedThsCode(nextItems[0]?.ThsCode ?? null);
       }
     } catch {
       setFeedbackTone('error');
@@ -231,26 +293,61 @@ const HomeView = () => {
       <section className="mx-auto flex w-full max-w-6xl flex-col gap-6">
         <header className="space-y-2">
           <h1 className="text-3xl font-semibold tracking-tight">监控列表</h1>
-          <p className="text-sm text-muted-foreground">查看基金、ETF、股票近一年的最大回撤。</p>
+          <p className="text-sm text-muted-foreground">查看基金、ETF、股票、指数近一年的最大回撤。</p>
         </header>
 
         <Card className="border border-border/80 bg-card/90 shadow-none">
-          <CardContent className="flex flex-col gap-3 py-4 sm:flex-row sm:items-center">
-            <Input
-              value={code}
-              onChange={(event) => setCode(event.target.value.replace(/\D/g, '').slice(0, 6))}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter') {
-                  event.preventDefault();
-                  void handleAdd();
-                }
-              }}
-              placeholder="输入 6 位代码"
-              className="h-10 bg-background"
-            />
-            <Button onClick={() => void handleAdd()} disabled={isSubmitting} className="h-10 px-4">
-              {isSubmitting ? '添加中…' : '添加'}
-            </Button>
+          <CardContent className="space-y-3 py-4">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+              <Input
+                value={code}
+                onChange={(event) => setCode(event.target.value.replace(/\D/g, '').slice(0, 6))}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') {
+                    event.preventDefault();
+                    void handleAdd();
+                  }
+                }}
+                placeholder="输入 6 位代码"
+                className="h-10 bg-background"
+              />
+              <Button onClick={() => void handleAdd()} disabled={isSubmitting} className="h-10 px-4">
+                {isSubmitting ? '添加中…' : '添加'}
+              </Button>
+            </div>
+
+            {code.trim().length === 6 ? (
+              <div className="rounded-xl border border-border/70 bg-background/70">
+                {isSearching ? (
+                  <div className="px-3 py-2 text-sm text-muted-foreground">搜索候选中…</div>
+                ) : candidates.length === 0 ? (
+                  <div className="px-3 py-2 text-sm text-muted-foreground">没有找到可选标的。</div>
+                ) : (
+                  <div className="max-h-64 overflow-y-auto py-1">
+                    {candidates.map((candidate) => {
+                      const isSelected = selectedCandidate?.ThsCode === candidate.ThsCode;
+                      return (
+                        <button
+                          key={candidate.ThsCode}
+                          type="button"
+                          onClick={() => setSelectedCandidate(candidate)}
+                          className={cn(
+                            'flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm transition-colors hover:bg-muted/40',
+                            isSelected && 'bg-primary/15 text-foreground ring-1 ring-primary/30'
+                          )}
+                        >
+                          <div>
+                            <div className="font-medium text-foreground">{candidate.Name}</div>
+                            <div className="mt-1 text-xs text-muted-foreground">{candidate.Code} · {candidate.SecurityType} · {candidate.ThsCode}</div>
+                          </div>
+                          {isSelected ? <span className="text-xs text-muted-foreground">已选</span> : null}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            ) : null}
           </CardContent>
         </Card>
 
@@ -274,18 +371,18 @@ const HomeView = () => {
                 <div className="divide-y divide-border/70 rounded-xl border border-border/70 bg-background/70">
                   {items.map((item) => (
                     <button
-                      key={item.Code}
+                      key={item.ThsCode}
                       type="button"
-                      onClick={() => setSelectedCode(item.Code)}
+                      onClick={() => setSelectedThsCode(item.ThsCode)}
                       className={cn(
                         'flex w-full flex-col gap-3 px-4 py-4 text-left transition-colors hover:bg-muted/40',
-                        selectedCode === item.Code && 'bg-muted/60'
+                        selectedThsCode === item.ThsCode && 'bg-muted/60'
                       )}
                     >
                       <div className="flex items-start justify-between gap-3">
                         <div>
                           <div className="text-sm font-medium text-foreground">{item.Name}</div>
-                          <div className="mt-1 text-xs text-muted-foreground">{item.Code} · {item.SecurityType}</div>
+                          <div className="mt-1 text-xs text-muted-foreground">{item.Code} · {item.SecurityType} · {item.ThsCode}</div>
                         </div>
                         <Button
                           type="button"
@@ -294,7 +391,7 @@ const HomeView = () => {
                           className="text-muted-foreground hover:text-foreground"
                           onClick={(event) => {
                             event.stopPropagation();
-                            void handleDelete(item.Code);
+                            void handleDelete(item.ThsCode);
                           }}
                         >
                           删除

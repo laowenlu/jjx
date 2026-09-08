@@ -187,7 +187,7 @@ namespace App.Api
             services.AddScoped<AuthenticatorEngine>();
             services.AddScoped<DrawdownEngine>();
             services.AddScoped<UserContextService>();
-            services.AddHttpClient<IMarketDataAccessor, EastMoneyMarketDataAccessor>();
+            services.AddHttpClient<IMarketDataAccessor, HiThinkMarketDataAccessor>();
 
             // ServiceInvoker AuthZ (shared)
             services.AddScoped<IMethodAuthorizer, AttributeMethodAuthorizer>();

@@ -91,7 +91,7 @@ This expanded baseline gives generated apps a stronger structural vocabulary tha
 ## Implementation Index
 
 ### Frontend Views
-- `react-app/src/views/ExampleView.tsx` — 监控列表主界面，支持输入 6 位代码、查看已保存标的、切换一年回撤曲线并删除标的。
+- `react-app/src/views/ExampleView.tsx` — 监控列表主界面，支持输入 6 位代码后搜索候选标的、选择具体 `thscode`、查看已保存标的、切换一年回撤曲线并删除标的。
 - `react-app/src/views/NotFoundView.tsx` — 404 fallback view.
 - `react-app/src/views/UnauthorizedView.tsx` — fallback for authenticated users who do not have permission for a protected route.
 
@@ -125,7 +125,7 @@ This expanded baseline gives generated apps a stronger structural vocabulary tha
 - `Services/App.Api/Managers/AuthManager.cs` — auth endpoints.
   - Methods: `Login`, `SignUp`, `SendPasswordResetEmail`, `GetSession`, `ChangePassword`, `UpdateUserEmail`, `UpdateUserPassword`, `UpdateUserName`.
 - `Services/App.Api/Managers/WatchlistManager.cs` — 监控标的管理接口。
-  - Methods: `GetWatchlist`, `AddWatchlistItem`, `DeleteWatchlistItem`, `GetWatchlistItemDetail`.
+  - Methods: `SearchWatchlistCandidates`, `GetWatchlist`, `AddWatchlistItem`, `DeleteWatchlistItem`, `GetWatchlistItemDetail`.
 
 ### Engines
 - `Services/App.Api/Engines/SampleEngine.cs` — Placeholder example stateless engine; replace with real engines.
@@ -138,7 +138,7 @@ This expanded baseline gives generated apps a stronger structural vocabulary tha
 - `Services/App.Api/Accessors/LocalDatabaseAccessor.cs` — local alternative DB implementation, used when the app is running in Development (local) mode.
 - `Services/App.Api/Accessors/LocalAuthAccessor.cs` — local alternative auth implementation, used when the app is running in Development (local) mode.
 - `Services/App.Api/Accessors/LocalBlobStorageAccessor.cs` — local alternative blob implementation, used when the app is running in Development (local) mode.
-- `Services/App.Api/Accessors/EastMoneyMarketDataAccessor.cs` — 封装东方财富公开行情与近一年日线数据访问，并映射为应用内部统一结构。
+- `Services/App.Api/Accessors/HiThinkMarketDataAccessor.cs` — 封装同花顺金融数据服务的标的搜索、行情与近一年历史数据访问，并映射为应用内部统一结构。
 
 ---
 
@@ -146,10 +146,11 @@ This expanded baseline gives generated apps a stronger structural vocabulary tha
 
 ### 监控列表与一年回撤查看
 1. 前端首页加载时调用 `WatchlistManager.GetWatchlist`，恢复本地已保存的监控标的列表。
-2. 用户输入 6 位代码后调用 `WatchlistManager.AddWatchlistItem`；后端先检查是否重复，再通过 `EastMoneyMarketDataAccessor` 获取标的名称、当前价格与近一年历史日线。
-3. `DrawdownEngine` 使用历史价格计算最大回撤与逐日回撤曲线，结果随 `WatchedAsset` 一并持久化，供后续快速恢复展示。
-4. 前端列表展示名称、代码、现价、最大回撤，并在选中某项时调用 `WatchlistManager.GetWatchlistItemDetail` 加载该标的曲线。
-5. 删除操作调用 `WatchlistManager.DeleteWatchlistItem`，列表与选中曲线区域同步更新；若当前无选中项则显示空状态。
+2. 用户输入 6 位代码后先调用 `WatchlistManager.SearchWatchlistCandidates`；后端通过同花顺 `meta/tickers/search` 返回候选标的，由前端以下拉列表展示名称、类型和唯一 `thscode` 供选择。
+3. 用户确认候选后调用 `WatchlistManager.AddWatchlistItem`；后端按 `thscode` 检查是否重复，再通过 `HiThinkMarketDataAccessor` 根据资产类型分别获取股票、指数或基金的近一年数据。
+4. `DrawdownEngine` 使用历史价格或基金净值序列计算最大回撤与逐日回撤曲线，结果随 `WatchedAsset` 一并按 `thscode` 持久化，供后续快速恢复展示。
+5. 前端列表展示名称、代码、现价、最大回撤，并在选中某项时调用 `WatchlistManager.GetWatchlistItemDetail` 按 `thscode` 加载该标的曲线。
+6. 删除操作调用 `WatchlistManager.DeleteWatchlistItem`，列表与选中曲线区域同步更新；若当前无选中项则显示空状态。
 
 ### Backend→Frontend HTTP Streaming (NDJSON)
 This StarterKit supports a ServiceInvoker streaming RPC pattern (newline-delimited JSON over `fetch()`):
@@ -192,4 +193,5 @@ Relevant files:
 - (External services/APIs used and what for)
 
 ## Configuration Keys
+- `HiThinkApiKey` — 同花顺金融数据服务 API Key；后端通过请求头 `X-api-key` 调用标的搜索、行情与历史数据接口。
 - Supabase auth/storage/database config is provisioned by the StarterKit deployment/config pipeline. Do not add duplicate `SupabaseUrl` or `SupabaseJwksUrl` keys; runtime code derives auth URLs from `SupabaseId` where needed.

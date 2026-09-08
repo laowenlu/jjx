@@ -1,5 +1,8 @@
-import { GetWatchlistRequestDto, GetWatchlistResponseDto, AddWatchlistItemRequestDto, AddWatchlistItemResponseDto, DeleteWatchlistItemRequestDto, OperationResultDto, GetWatchlistItemDetailRequestDto, GetWatchlistItemDetailResponseDto } from "./AppDtos";
+import { SearchWatchlistCandidatesRequestDto, SearchWatchlistCandidatesResponseDto, GetWatchlistRequestDto, GetWatchlistResponseDto, AddWatchlistItemRequestDto, AddWatchlistItemResponseDto, DeleteWatchlistItemRequestDto, OperationResultDto, GetWatchlistItemDetailRequestDto, GetWatchlistItemDetailResponseDto } from "./AppDtos";
 import ApiClient, { ApiClientRequestOptions } from "./ApiClient";
+
+const SearchWatchlistCandidates = (request: SearchWatchlistCandidatesRequestDto, options?: ApiClientRequestOptions): Promise<SearchWatchlistCandidatesResponseDto> =>
+  ApiClient.invokeMethod<SearchWatchlistCandidatesResponseDto>("Api", "WatchlistManager", "SearchWatchlistCandidates", request, options);
 
 const GetWatchlist = (request: GetWatchlistRequestDto, options?: ApiClientRequestOptions): Promise<GetWatchlistResponseDto> =>
   ApiClient.invokeMethod<GetWatchlistResponseDto>("Api", "WatchlistManager", "GetWatchlist", request, options);
@@ -14,6 +17,7 @@ const GetWatchlistItemDetail = (request: GetWatchlistItemDetailRequestDto, optio
   ApiClient.invokeMethod<GetWatchlistItemDetailResponseDto>("Api", "WatchlistManager", "GetWatchlistItemDetail", request, options);
 
 export default {
+  SearchWatchlistCandidates,
   GetWatchlist,
   AddWatchlistItem,
   DeleteWatchlistItem,

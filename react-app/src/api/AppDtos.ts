@@ -2,6 +2,8 @@ import { SampleEnum } from "./Enums";
 
 export interface AddWatchlistItemRequestDto {
   Code: string;
+  ThsCode: string;
+  AssetType: string;
 }
 
 export interface AddWatchlistItemResponseDto {
@@ -16,7 +18,7 @@ export interface ChangePasswordRequestDto {
 }
 
 export interface DeleteWatchlistItemRequestDto {
-  Code: string;
+  ThsCode: string;
 }
 
 export interface DrawdownPointDto {
@@ -29,7 +31,7 @@ export interface GetSessionRequestDto {
 }
 
 export interface GetWatchlistItemDetailRequestDto {
-  Code: string;
+  ThsCode: string;
 }
 
 export interface GetWatchlistItemDetailResponseDto {
@@ -61,6 +63,15 @@ export interface LoginResponseDto {
 
 export interface OperationResultDto {
   Success: boolean;
+  Message: string;
+}
+
+export interface SearchWatchlistCandidatesRequestDto {
+  Query: string;
+}
+
+export interface SearchWatchlistCandidatesResponseDto {
+  Items: WatchlistSearchCandidateDto[];
   Message: string;
 }
 
@@ -148,12 +159,22 @@ export interface UpdateUserPasswordResponseDto {
 }
 
 export interface WatchlistItemSummaryDto {
+  ThsCode: string;
   Code: string;
   Name: string;
   SecurityType: string;
+  AssetType: string;
   CurrentPrice: number | null;
   MaxDrawdown: number | null;
   DataWarning: string | null;
   LastUpdatedUtc: string;
+}
+
+export interface WatchlistSearchCandidateDto {
+  ThsCode: string;
+  Code: string;
+  Name: string;
+  AssetType: string;
+  SecurityType: string;
 }
 

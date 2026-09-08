@@ -2,6 +2,7 @@ using App.Api.Accessors;
 using App.Api.Engines;
 using App.ServiceInvoker.Interfaces;
 using Contracts.Domain.Database;
+using Contracts.Domain.Logic;
 using Contracts.Dto;
 
 namespace App.Api.Managers;
@@ -19,6 +20,25 @@ public class WatchlistManager : IManagerService
         _drawdownEngine = drawdownEngine;
     }
 
+    public async Task<SearchWatchlistCandidatesResponseDto> SearchWatchlistCandidates(SearchWatchlistCandidatesRequestDto request)
+    {
+        var query = NormalizeCode(request.Query);
+        if (query == null)
+        {
+            return new SearchWatchlistCandidatesResponseDto
+            {
+                Message = "请输入 6 位代码。"
+            };
+        }
+
+        var candidates = await _marketDataAccessor.SearchSecurities(query);
+        return new SearchWatchlistCandidatesResponseDto
+        {
+            Message = candidates.Count == 0 ? "没有找到可选标的。" : "ok",
+            Items = candidates.Select(ToCandidateDto).ToList()
+        };
+    }
+
     public async Task<GetWatchlistResponseDto> GetWatchlist(GetWatchlistRequestDto request)
     {
         var items = await _databaseAccessor.GetAllDocuments<WatchedAsset>();
@@ -26,7 +46,7 @@ public class WatchlistManager : IManagerService
         {
             Items = items
                 .OrderByDescending(x => x.LastUpdatedUtc)
-                .ThenBy(x => x.Code)
+                .ThenBy(x => x.ThsCode)
                 .Select(ToSummaryDto)
                 .ToList()
         };
@@ -35,16 +55,17 @@ public class WatchlistManager : IManagerService
     public async Task<AddWatchlistItemResponseDto> AddWatchlistItem(AddWatchlistItemRequestDto request)
     {
         var normalizedCode = NormalizeCode(request.Code);
-        if (normalizedCode == null)
+        if (normalizedCode == null || string.IsNullOrWhiteSpace(request.ThsCode) || string.IsNullOrWhiteSpace(request.AssetType))
         {
             return new AddWatchlistItemResponseDto
             {
                 Success = false,
-                Message = "请输入 6 位代码。"
+                Message = "请先从候选列表中选择标的。"
             };
         }
 
-        var existing = await _databaseAccessor.GetDocumentByProperty<WatchedAsset>(x => x.Code == normalizedCode);
+        var thsCode = request.ThsCode.Trim();
+        var existing = await FindWatchedAsset(thsCode);
         if (existing != null)
         {
             return new AddWatchlistItemResponseDto
@@ -56,7 +77,7 @@ public class WatchlistManager : IManagerService
             };
         }
 
-        var securityData = await _marketDataAccessor.GetSecurityData(normalizedCode);
+        var securityData = await _marketDataAccessor.GetSecurityData(thsCode, request.AssetType.Trim());
         if (securityData == null)
         {
             return new AddWatchlistItemResponseDto
@@ -78,9 +99,11 @@ public class WatchlistManager : IManagerService
 
         var watchedAsset = new WatchedAsset
         {
-            Code = normalizedCode,
+            ThsCode = securityData.ThsCode,
+            Code = securityData.Code,
             Name = securityData.Name,
             SecurityType = securityData.SecurityType,
+            AssetType = securityData.AssetType,
             CurrentPrice = securityData.CurrentPrice,
             MaxDrawdown = maxDrawdown,
             DrawdownSeries = series,
@@ -100,17 +123,16 @@ public class WatchlistManager : IManagerService
 
     public async Task<OperationResultDto> DeleteWatchlistItem(DeleteWatchlistItemRequestDto request)
     {
-        var normalizedCode = NormalizeCode(request.Code);
-        if (normalizedCode == null)
+        if (string.IsNullOrWhiteSpace(request.ThsCode))
         {
             return new OperationResultDto
             {
                 Success = false,
-                Message = "请输入 6 位代码。"
+                Message = "未找到该标的。"
             };
         }
 
-        var existing = await _databaseAccessor.GetDocumentByProperty<WatchedAsset>(x => x.Code == normalizedCode);
+        var existing = await FindWatchedAsset(request.ThsCode.Trim());
         if (existing == null)
         {
             return new OperationResultDto
@@ -130,17 +152,16 @@ public class WatchlistManager : IManagerService
 
     public async Task<GetWatchlistItemDetailResponseDto> GetWatchlistItemDetail(GetWatchlistItemDetailRequestDto request)
     {
-        var normalizedCode = NormalizeCode(request.Code);
-        if (normalizedCode == null)
+        if (string.IsNullOrWhiteSpace(request.ThsCode))
         {
             return new GetWatchlistItemDetailResponseDto
             {
                 Success = false,
-                Message = "请输入 6 位代码。"
+                Message = "未找到该标的。"
             };
         }
 
-        var existing = await _databaseAccessor.GetDocumentByProperty<WatchedAsset>(x => x.Code == normalizedCode);
+        var existing = await FindWatchedAsset(request.ThsCode.Trim());
         if (existing == null)
         {
             return new GetWatchlistItemDetailResponseDto
@@ -167,6 +188,11 @@ public class WatchlistManager : IManagerService
         };
     }
 
+    private async Task<WatchedAsset?> FindWatchedAsset(string thsCode)
+    {
+        return await _databaseAccessor.GetDocumentByProperty<WatchedAsset>(x => x.ThsCode == thsCode || x.Code == thsCode);
+    }
+
     private static string? NormalizeCode(string? code)
     {
         var normalized = (code ?? string.Empty).Trim();
@@ -178,17 +204,45 @@ public class WatchlistManager : IManagerService
         return normalized;
     }
 
+    private static WatchlistSearchCandidateDto ToCandidateDto(SearchedSecurityCandidate candidate)
+    {
+        return new WatchlistSearchCandidateDto
+        {
+            ThsCode = candidate.ThsCode,
+            Code = candidate.Ticker,
+            Name = candidate.Name,
+            AssetType = candidate.AssetType,
+            SecurityType = ToSecurityTypeLabel(candidate.AssetType)
+        };
+    }
+
     private static WatchlistItemSummaryDto ToSummaryDto(WatchedAsset asset)
     {
         return new WatchlistItemSummaryDto
         {
+            ThsCode = string.IsNullOrWhiteSpace(asset.ThsCode) ? asset.Code : asset.ThsCode,
             Code = asset.Code,
             Name = asset.Name,
             SecurityType = asset.SecurityType,
+            AssetType = asset.AssetType,
             CurrentPrice = asset.CurrentPrice,
             MaxDrawdown = asset.MaxDrawdown,
             DataWarning = asset.DataWarning,
             LastUpdatedUtc = asset.LastUpdatedUtc.ToString("O")
+        };
+    }
+
+    private static string ToSecurityTypeLabel(string assetType)
+    {
+        return assetType switch
+        {
+            "a-share" => "股票",
+            "a-share-index" => "指数",
+            "fund-etf" => "ETF",
+            "fund-lof" => "LOF",
+            "fund-reits" => "REITs",
+            "fund-otc" => "基金",
+            _ => string.IsNullOrWhiteSpace(assetType) ? "标的" : assetType
         };
     }
 }

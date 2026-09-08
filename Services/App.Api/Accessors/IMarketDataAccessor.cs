@@ -4,5 +4,7 @@ namespace App.Api.Accessors;
 
 public interface IMarketDataAccessor
 {
-    Task<ResolvedSecurityData?> GetSecurityData(string code);
+    Task<List<SearchedSecurityCandidate>> SearchSecurities(string query);
+
+    Task<ResolvedSecurityData?> GetSecurityData(string thsCode, string assetType);
 }
