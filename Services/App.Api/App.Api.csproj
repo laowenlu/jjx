@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Marten" Version="7.37.1" />
+    <PackageReference Include="Marten.NodaTime" Version="7.37.1" />
+    <PackageReference Include="Microsoft.IdentityModel.Tokens" Version="8.16.0" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="9.0.1" />
+    <PackageReference Include="NodaTime" Version="3.2.1" />
+    <PackageReference Include="RideCompiler" Version="1.1.0" />
+    <PackageReference Include="Serilog" Version="4.2.0" />
+    <PackageReference Include="Serilog.Extensions.Hosting" Version="9.0.0" />
+    <PackageReference Include="Serilog.Sinks.Marten" Version="1.0.0" />
+    <PackageReference Include="Supabase" Version="1.1.1" />
+    <PackageReference Include="Swashbuckle.AspNetCore" Version="6.4.0" />
+    <PackageReference Include="System.IdentityModel.Tokens.Jwt" Version="8.16.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\App.ServiceInvoker\App.ServiceInvoker.csproj" />
+    <ProjectReference Include="..\Contracts.Domain\Contracts.Domain.csproj" />
+    <ProjectReference Include="..\Contracts.Dto\Contracts.Dto.csproj" />
+  </ItemGroup>
+
+  <!-- Ensure dotnet-watch restarts when config files change during local development -->
+  <ItemGroup>
+    <Watch Include="appsettings.json" />
+    <Watch Include="appsettings.Development.json" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,88 @@
+name: Deploy to Azure
+
+on:
+  workflow_dispatch:
+    inputs:
+      SWA_DEPLOYMENT_TOKEN:
+        description: 'Static Web Apps deployment token'
+        required: true
+      APP_SERVICE_NAME:
+        description: 'Azure App Service name for the .NET API'
+        required: true
+      APP_SERVICE_PUBLISH_PROFILE:
+        description: 'Publish profile XML for the App Service'
+        required: true
+
+jobs:
+  build-and-deploy:
+    runs-on: linux_amd64
+    env:
+      DOTNET_INSTALL_DIR: $HOME/.dotnet
+      DOTNET_ROOT: $HOME/.dotnet
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ---------- Frontend (React/Vite) ----------
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        working-directory: react-app
+        run: npm ci
+
+      - name: Build frontend
+        working-directory: react-app
+        run: npm run build
+
+      # ---------- Backend (.NET API) ----------
+      - name: Set up .NET (user install)
+        uses: actions/setup-dotnet@v4
+        env:
+          DOTNET_INSTALL_DIR: ${{ env.DOTNET_INSTALL_DIR }}
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Add dotnet to PATH
+        run: echo "$DOTNET_INSTALL_DIR" >> "$GITHUB_PATH"
+
+      - name: dotnet sanity
+        run: dotnet --info
+
+      - name: Publish API
+        working-directory: ./Services/App.Api
+        run: dotnet publish -c Release -o ./publish
+
+      # ---------- Deploy (both steps at the end) ----------
+      - name: Deploy Static Web App
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          for attempt in 1 2 3; do
+            if npx -y @azure/static-web-apps-cli@2.0.6 deploy \
+              --app-location react-app \
+              --output-location dist \
+              --env Production \
+              --deployment-token "${{ github.event.inputs.SWA_DEPLOYMENT_TOKEN }}"; then
+              exit 0
+            fi
+
+            if [ "$attempt" -eq 3 ]; then
+              echo "Static Web App deployment failed after 3 attempts."
+              exit 1
+            fi
+
+            delay=$((attempt * 15))
+            echo "Static Web App deployment attempt ${attempt} failed; retrying in ${delay}s..."
+            sleep "$delay"
+          done
+
+      - name: Deploy API to Azure App Service
+        uses: azure/webapps-deploy@v2
+        with:
+          app-name: ${{ github.event.inputs.APP_SERVICE_NAME }}
+          publish-profile: ${{ github.event.inputs.APP_SERVICE_PUBLISH_PROFILE }}
+          package: ./Services/App.Api/publish
