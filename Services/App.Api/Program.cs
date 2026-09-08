@@ -183,8 +183,11 @@ namespace App.Api
         {
             // All orchestrating manager and engine registration
             services.AddScoped<AuthManager>();
+            services.AddScoped<WatchlistManager>();
             services.AddScoped<AuthenticatorEngine>();
+            services.AddScoped<DrawdownEngine>();
             services.AddScoped<UserContextService>();
+            services.AddHttpClient<IMarketDataAccessor, EastMoneyMarketDataAccessor>();
 
             // ServiceInvoker AuthZ (shared)
             services.AddScoped<IMethodAuthorizer, AttributeMethodAuthorizer>();

@@ -91,7 +91,7 @@ This expanded baseline gives generated apps a stronger structural vocabulary tha
 ## Implementation Index
 
 ### Frontend Views
-- `react-app/src/views/ExampleView.tsx` — placeholder welcome page that provides a calm, domain-neutral first screen.
+- `react-app/src/views/ExampleView.tsx` — 监控列表主界面，支持输入 6 位代码、查看已保存标的、切换一年回撤曲线并删除标的。
 - `react-app/src/views/NotFoundView.tsx` — 404 fallback view.
 - `react-app/src/views/UnauthorizedView.tsx` — fallback for authenticated users who do not have permission for a protected route.
 
@@ -124,9 +124,12 @@ This expanded baseline gives generated apps a stronger structural vocabulary tha
 ### Managers
 - `Services/App.Api/Managers/AuthManager.cs` — auth endpoints.
   - Methods: `Login`, `SignUp`, `SendPasswordResetEmail`, `GetSession`, `ChangePassword`, `UpdateUserEmail`, `UpdateUserPassword`, `UpdateUserName`.
+- `Services/App.Api/Managers/WatchlistManager.cs` — 监控标的管理接口。
+  - Methods: `GetWatchlist`, `AddWatchlistItem`, `DeleteWatchlistItem`, `GetWatchlistItemDetail`.
 
 ### Engines
 - `Services/App.Api/Engines/SampleEngine.cs` — Placeholder example stateless engine; replace with real engines.
+- `Services/App.Api/Engines/DrawdownEngine.cs` — 根据近一年历史价格序列计算最大回撤和回撤曲线。
 
 ### Accessors
 - `Services/App.Api/Accessors/DatabaseAccessor.cs` — Marten document DB operations.
@@ -135,11 +138,18 @@ This expanded baseline gives generated apps a stronger structural vocabulary tha
 - `Services/App.Api/Accessors/LocalDatabaseAccessor.cs` — local alternative DB implementation, used when the app is running in Development (local) mode.
 - `Services/App.Api/Accessors/LocalAuthAccessor.cs` — local alternative auth implementation, used when the app is running in Development (local) mode.
 - `Services/App.Api/Accessors/LocalBlobStorageAccessor.cs` — local alternative blob implementation, used when the app is running in Development (local) mode.
+- `Services/App.Api/Accessors/EastMoneyMarketDataAccessor.cs` — 封装东方财富公开行情与近一年日线数据访问，并映射为应用内部统一结构。
 
 ---
 
 ## Key Flows
-- (Document major end-to-end flows at a high level)
+
+### 监控列表与一年回撤查看
+1. 前端首页加载时调用 `WatchlistManager.GetWatchlist`，恢复本地已保存的监控标的列表。
+2. 用户输入 6 位代码后调用 `WatchlistManager.AddWatchlistItem`；后端先检查是否重复，再通过 `EastMoneyMarketDataAccessor` 获取标的名称、当前价格与近一年历史日线。
+3. `DrawdownEngine` 使用历史价格计算最大回撤与逐日回撤曲线，结果随 `WatchedAsset` 一并持久化，供后续快速恢复展示。
+4. 前端列表展示名称、代码、现价、最大回撤，并在选中某项时调用 `WatchlistManager.GetWatchlistItemDetail` 加载该标的曲线。
+5. 删除操作调用 `WatchlistManager.DeleteWatchlistItem`，列表与选中曲线区域同步更新；若当前无选中项则显示空状态。
 
 ### Backend→Frontend HTTP Streaming (NDJSON)
 This StarterKit supports a ServiceInvoker streaming RPC pattern (newline-delimited JSON over `fetch()`):

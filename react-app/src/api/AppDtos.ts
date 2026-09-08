@@ -1,14 +1,49 @@
+import { SampleEnum } from "./Enums";
+
+export interface AddWatchlistItemRequestDto {
+  Code: string;
+}
+
+export interface AddWatchlistItemResponseDto {
+  Success: boolean;
+  AlreadyExists: boolean;
+  Message: string;
+  Item: WatchlistItemSummaryDto | null;
+}
 
 export interface ChangePasswordRequestDto {
   NewPassword: string;
 }
 
-export interface CreateUserRequest {
-  Name: string;
-  Email: string;
+export interface DeleteWatchlistItemRequestDto {
+  Code: string;
+}
+
+export interface DrawdownPointDto {
+  Date: string;
+  Price: number;
+  Drawdown: number;
 }
 
 export interface GetSessionRequestDto {
+}
+
+export interface GetWatchlistItemDetailRequestDto {
+  Code: string;
+}
+
+export interface GetWatchlistItemDetailResponseDto {
+  Success: boolean;
+  Message: string;
+  Item: WatchlistItemSummaryDto | null;
+  DrawdownSeries: DrawdownPointDto[];
+}
+
+export interface GetWatchlistRequestDto {
+}
+
+export interface GetWatchlistResponseDto {
+  Items: WatchlistItemSummaryDto[];
 }
 
 export interface LoginRequestDto {
@@ -37,7 +72,7 @@ export interface SendPasswordResetRequestDto {
 export interface ServiceInvocationRequestDto {
   ManagerName: string;
   MethodName: string;
-  Parameters: any[] | null;
+  Parameters: (any | null)[] | null;
   AccessToken: string | null;
   RefreshToken: string | null;
 }
@@ -52,7 +87,7 @@ export interface ServiceInvocationResponseEnvelopeDto {
 export interface ServiceStreamingRequestDto {
   ManagerName: string;
   MethodName: string;
-  Parameters: any[] | null;
+  Parameters: (any | null)[] | null;
   AccessToken: string | null;
   RefreshToken: string | null;
 }
@@ -111,3 +146,14 @@ export interface UpdateUserPasswordResponseDto {
   Success: boolean;
   Message: string;
 }
+
+export interface WatchlistItemSummaryDto {
+  Code: string;
+  Name: string;
+  SecurityType: string;
+  CurrentPrice: number | null;
+  MaxDrawdown: number | null;
+  DataWarning: string | null;
+  LastUpdatedUtc: string;
+}
+
