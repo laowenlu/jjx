@@ -116,7 +116,7 @@ public class HiThinkMarketDataAccessor : IMarketDataAccessor
         return inferredCandidates;
     }
 
-    public async Task<ResolvedSecurityData?> GetSecurityData(string thsCode, string assetType)
+    public async Task<ResolvedSecurityData?> GetSecurityData(string thsCode, string assetType, string range)
     {
         try
         {
@@ -128,9 +128,9 @@ public class HiThinkMarketDataAccessor : IMarketDataAccessor
 
             return assetType switch
             {
-                "a-share" => await GetShareSecurityData(candidate),
-                "a-share-index" => await GetIndexSecurityData(candidate),
-                "fund-otc" or "fund-etf" or "fund-lof" or "fund-reits" => await GetFundSecurityData(candidate),
+                "a-share" => await GetShareSecurityData(candidate, range),
+                "a-share-index" => await GetIndexSecurityData(candidate, range),
+                "fund-otc" or "fund-etf" or "fund-lof" or "fund-reits" => await GetFundSecurityData(candidate, range),
                 _ => null
             };
         }
@@ -140,7 +140,7 @@ public class HiThinkMarketDataAccessor : IMarketDataAccessor
         }
     }
 
-    private async Task<ResolvedSecurityData?> GetShareSecurityData(SearchedSecurityCandidate candidate)
+    private async Task<ResolvedSecurityData?> GetShareSecurityData(SearchedSecurityCandidate candidate, string range)
     {
         using var snapshotRequest = CreateRequest($"/api/a-share/prices/snapshot?thscodes={Uri.EscapeDataString(candidate.ThsCode)}");
         using var snapshotResponse = await _httpClient.SendAsync(snapshotRequest);
@@ -156,7 +156,7 @@ public class HiThinkMarketDataAccessor : IMarketDataAccessor
         }
 
         var snapshotItem = snapshotItems.EnumerateArray().FirstOrDefault();
-        var history = await GetHistoricalBars($"/api/a-share/prices/historical?thscode={Uri.EscapeDataString(candidate.ThsCode)}&interval=1d&start={GetYearAgoTimestamp()}&end={GetNowTimestamp()}&adjust=forward");
+        var history = await GetHistoricalBars($"/api/a-share/prices/historical?thscode={Uri.EscapeDataString(candidate.ThsCode)}&interval=1d&start={GetRangeStartTimestamp(range)}&end={GetNowTimestamp()}&adjust=forward");
         if (history.Count == 0)
         {
             return null;
@@ -174,7 +174,7 @@ public class HiThinkMarketDataAccessor : IMarketDataAccessor
         };
     }
 
-    private async Task<ResolvedSecurityData?> GetIndexSecurityData(SearchedSecurityCandidate candidate)
+    private async Task<ResolvedSecurityData?> GetIndexSecurityData(SearchedSecurityCandidate candidate, string range)
     {
         using var snapshotRequest = CreateRequest($"/api/a-share-index/prices/snapshot?thscodes={Uri.EscapeDataString(candidate.ThsCode)}");
         using var snapshotResponse = await _httpClient.SendAsync(snapshotRequest);
@@ -190,7 +190,7 @@ public class HiThinkMarketDataAccessor : IMarketDataAccessor
         }
 
         var snapshotItem = snapshotItems.EnumerateArray().FirstOrDefault();
-        var history = await GetHistoricalBars($"/api/a-share-index/prices/historical?thscode={Uri.EscapeDataString(candidate.ThsCode)}&interval=1d&start={GetYearAgoTimestamp()}&end={GetNowTimestamp()}");
+        var history = await GetHistoricalBars($"/api/a-share-index/prices/historical?thscode={Uri.EscapeDataString(candidate.ThsCode)}&interval=1d&start={GetRangeStartTimestamp(range)}&end={GetNowTimestamp()}");
         if (history.Count == 0)
         {
             return null;
@@ -208,10 +208,10 @@ public class HiThinkMarketDataAccessor : IMarketDataAccessor
         };
     }
 
-    private async Task<ResolvedSecurityData?> GetFundSecurityData(SearchedSecurityCandidate candidate)
+    private async Task<ResolvedSecurityData?> GetFundSecurityData(SearchedSecurityCandidate candidate, string range)
     {
         var fundType = ToFundType(candidate.AssetType);
-        using var navRequest = CreateRequest($"/api/fund/performance/nav?fund_type={fundType}&thscode={Uri.EscapeDataString(candidate.ThsCode)}&range=year&nav_type=unit%2Cadj");
+        using var navRequest = CreateRequest($"/api/fund/performance/nav?fund_type={fundType}&thscode={Uri.EscapeDataString(candidate.ThsCode)}&range={ToFundRange(range)}&nav_type=unit%2Cadj");
         using var navResponse = await _httpClient.SendAsync(navRequest);
         if (!navResponse.IsSuccessStatusCode)
         {
@@ -382,14 +382,39 @@ public class HiThinkMarketDataAccessor : IMarketDataAccessor
         return null;
     }
 
-    private static long GetYearAgoTimestamp()
+    private static long GetRangeStartTimestamp(string range)
     {
-        return new DateTimeOffset(DateTime.UtcNow.AddYears(-1).Date).ToUnixTimeMilliseconds();
+        var startDate = range switch
+        {
+            "6m" => DateTime.UtcNow.AddMonths(-6).Date,
+            "1y" => DateTime.UtcNow.AddYears(-1).Date,
+            "2y" => DateTime.UtcNow.AddYears(-2).Date,
+            "3y" => DateTime.UtcNow.AddYears(-3).Date,
+            "5y" => DateTime.UtcNow.AddYears(-5).Date,
+            "8y" => DateTime.UtcNow.AddYears(-8).Date,
+            _ => DateTime.UtcNow.AddYears(-1).Date
+        };
+
+        return new DateTimeOffset(startDate).ToUnixTimeMilliseconds();
     }
 
     private static long GetNowTimestamp()
     {
         return DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+    }
+
+    private static string ToFundRange(string range)
+    {
+        return range switch
+        {
+            "6m" => "half_year",
+            "1y" => "year",
+            "2y" => "2y",
+            "3y" => "3y",
+            "5y" => "5y",
+            "8y" => "8y",
+            _ => "year"
+        };
     }
 
     private static string ToFundType(string assetType)

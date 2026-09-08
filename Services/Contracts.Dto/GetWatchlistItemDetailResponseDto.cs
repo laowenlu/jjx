@@ -8,5 +8,9 @@ public class GetWatchlistItemDetailResponseDto
 
     public WatchlistItemSummaryDto? Item { get; set; }
 
+    public string SelectedRange { get; set; } = "1y";
+
+    public List<DrawdownRangeOptionDto> AvailableRanges { get; set; } = [];
+
     public List<DrawdownPointDto> DrawdownSeries { get; set; } = [];
 }

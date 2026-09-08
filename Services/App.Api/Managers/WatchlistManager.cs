@@ -9,6 +9,16 @@ namespace App.Api.Managers;
 
 public class WatchlistManager : IManagerService
 {
+    private static readonly List<DrawdownRangeOptionDto> RangeOptions =
+    [
+        new() { Value = "6m", Label = "半年" },
+        new() { Value = "1y", Label = "1年" },
+        new() { Value = "2y", Label = "2年" },
+        new() { Value = "3y", Label = "3年" },
+        new() { Value = "5y", Label = "5年" },
+        new() { Value = "8y", Label = "8年" }
+    ];
+
     private readonly IDatabaseAccessor _databaseAccessor;
     private readonly IMarketDataAccessor _marketDataAccessor;
     private readonly DrawdownEngine _drawdownEngine;
@@ -77,7 +87,7 @@ public class WatchlistManager : IManagerService
             };
         }
 
-        var securityData = await _marketDataAccessor.GetSecurityData(thsCode, request.AssetType.Trim());
+        var securityData = await _marketDataAccessor.GetSecurityData(thsCode, request.AssetType.Trim(), "1y");
         if (securityData == null)
         {
             return new AddWatchlistItemResponseDto
@@ -152,12 +162,15 @@ public class WatchlistManager : IManagerService
 
     public async Task<GetWatchlistItemDetailResponseDto> GetWatchlistItemDetail(GetWatchlistItemDetailRequestDto request)
     {
+        var selectedRange = NormalizeRange(request.Range);
         if (string.IsNullOrWhiteSpace(request.ThsCode))
         {
             return new GetWatchlistItemDetailResponseDto
             {
                 Success = false,
-                Message = "未找到该标的。"
+                Message = "未找到该标的。",
+                SelectedRange = selectedRange,
+                AvailableRanges = RangeOptions
             };
         }
 
@@ -167,16 +180,34 @@ public class WatchlistManager : IManagerService
             return new GetWatchlistItemDetailResponseDto
             {
                 Success = false,
-                Message = "未找到该标的。"
+                Message = "未找到该标的。",
+                SelectedRange = selectedRange,
+                AvailableRanges = RangeOptions
             };
         }
 
+        var securityData = await _marketDataAccessor.GetSecurityData(existing.ThsCode, existing.AssetType, selectedRange);
+        if (securityData == null)
+        {
+            return new GetWatchlistItemDetailResponseDto
+            {
+                Success = false,
+                Message = "当前周期的数据暂不可用。",
+                Item = ToSummaryDto(existing),
+                SelectedRange = selectedRange,
+                AvailableRanges = RangeOptions
+            };
+        }
+
+        var (_, series) = _drawdownEngine.Calculate(securityData.History);
         return new GetWatchlistItemDetailResponseDto
         {
             Success = true,
             Message = "ok",
             Item = ToSummaryDto(existing),
-            DrawdownSeries = existing.DrawdownSeries
+            SelectedRange = selectedRange,
+            AvailableRanges = RangeOptions,
+            DrawdownSeries = series
                 .OrderBy(x => x.Date)
                 .Select(x => new DrawdownPointDto
                 {
@@ -202,6 +233,12 @@ public class WatchlistManager : IManagerService
         }
 
         return normalized;
+    }
+
+    private static string NormalizeRange(string? range)
+    {
+        var normalized = (range ?? string.Empty).Trim().ToLowerInvariant();
+        return RangeOptions.Any(x => x.Value == normalized) ? normalized : "1y";
     }
 
     private static WatchlistSearchCandidateDto ToCandidateDto(SearchedSecurityCandidate candidate)

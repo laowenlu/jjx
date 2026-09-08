@@ -3,12 +3,20 @@ import WatchlistManager from '@/api/WatchlistManager';
 import type {
   AddWatchlistItemResponseDto,
   DrawdownPointDto,
+  DrawdownRangeOptionDto,
   WatchlistItemSummaryDto,
   WatchlistSearchCandidateDto,
 } from '@/api/AppDtos';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { cn } from '@/lib/utils';
 
 type FeedbackTone = 'default' | 'error';
@@ -18,6 +26,7 @@ type ChartPoint = {
   y: number;
   label: string;
   drawdown: number;
+  price: number;
 };
 
 const formatPrice = (value: number | null) => {
@@ -36,7 +45,19 @@ const formatDrawdown = (value: number | null) => {
   return `${(value * 100).toFixed(2)}%`;
 };
 
-const WatchlistChart = ({ series }: { series: DrawdownPointDto[] }) => {
+const WatchlistChart = ({
+  series,
+  rangeLabel,
+}: {
+  series: DrawdownPointDto[];
+  rangeLabel: string;
+}) => {
+  const [activeIndex, setActiveIndex] = useState<number | null>(null);
+
+  useEffect(() => {
+    setActiveIndex(series.length > 0 ? series.length - 1 : null);
+  }, [series]);
+
   const points = useMemo<ChartPoint[]>(() => {
     if (series.length === 0) {
       return [];
@@ -50,6 +71,7 @@ const WatchlistChart = ({ series }: { series: DrawdownPointDto[] }) => {
       y: ((0 - item.Drawdown) / range) * 100,
       label: item.Date,
       drawdown: item.Drawdown,
+      price: item.Price,
     }));
   }, [series]);
 
@@ -66,11 +88,35 @@ const WatchlistChart = ({ series }: { series: DrawdownPointDto[] }) => {
     return currentWorst;
   }, null);
 
+  const yTicks = useMemo(() => {
+    const worstValue = Math.min(worst?.Drawdown ?? 0, -0.01);
+    return [0, worstValue / 2, worstValue];
+  }, [worst]);
+
+  const xTicks = useMemo(() => {
+    if (series.length === 0) {
+      return [] as { x: number; label: string }[];
+    }
+
+    const indexes = Array.from(new Set([
+      0,
+      Math.floor((series.length - 1) / 2),
+      series.length - 1,
+    ])).sort((a, b) => a - b);
+
+    return indexes.map((index) => ({
+      x: series.length === 1 ? 0 : (index / (series.length - 1)) * 100,
+      label: series[index].Date,
+    }));
+  }, [series]);
+
+  const activePoint = activeIndex !== null ? points[activeIndex] ?? null : null;
+
   return (
     <div className="space-y-5">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <p className="text-xs text-muted-foreground">近一年回撤曲线</p>
+          <p className="text-xs text-muted-foreground">{rangeLabel}回撤曲线</p>
           <p className="mt-1 text-2xl font-semibold tracking-tight">{formatDrawdown(latest?.Drawdown ?? null)}</p>
         </div>
         <div className="text-right text-xs text-muted-foreground">
@@ -79,20 +125,104 @@ const WatchlistChart = ({ series }: { series: DrawdownPointDto[] }) => {
         </div>
       </div>
 
-      <div className="rounded-xl border border-border/80 bg-muted/30 p-4">
-        <svg viewBox="0 0 100 100" className="h-64 w-full overflow-visible" preserveAspectRatio="none" role="img" aria-label="回撤曲线图">
-          <line x1="0" y1="0" x2="100" y2="0" className="stroke-border" strokeWidth="0.7" vectorEffect="non-scaling-stroke" />
-          <line x1="0" y1="50" x2="100" y2="50" className="stroke-border/70" strokeWidth="0.7" vectorEffect="non-scaling-stroke" />
-          <line x1="0" y1="100" x2="100" y2="100" className="stroke-border" strokeWidth="0.7" vectorEffect="non-scaling-stroke" />
-          {path ? (
-            <path d={path} fill="none" className="stroke-primary" strokeWidth="1.8" vectorEffect="non-scaling-stroke" />
-          ) : null}
-        </svg>
-      </div>
+      {activePoint ? (
+        <div className="rounded-xl border border-border/80 bg-background/80 px-4 py-3 text-sm">
+          <div className="font-medium text-foreground">{activePoint.label}</div>
+          <div className="mt-1 flex flex-wrap gap-4 text-muted-foreground">
+            <span>价格 {formatPrice(activePoint.price)}</span>
+            <span>回撤 {formatDrawdown(activePoint.drawdown)}</span>
+          </div>
+        </div>
+      ) : null}
 
-      <div className="flex items-center justify-between text-xs text-muted-foreground">
-        <span>{series[0]?.Date}</span>
-        <span>{series.at(-1)?.Date}</span>
+      <div className="rounded-xl border border-border/80 bg-muted/30 p-4">
+        <div className="grid grid-cols-[52px_minmax(0,1fr)] gap-3">
+          <div className="relative h-64 text-[11px] text-muted-foreground">
+            {yTicks.map((tick, index) => {
+              const worstValue = Math.min(worst?.Drawdown ?? 0, -0.01);
+              const range = Math.max(Math.abs(worstValue), 0.01);
+              const y = ((0 - tick) / range) * 100;
+              return (
+                <div key={`${tick}-${index}`} className="absolute left-0 right-0 -translate-y-1/2" style={{ top: `${y}%` }}>
+                  {formatDrawdown(tick)}
+                </div>
+              );
+            })}
+          </div>
+
+          <div>
+            <svg viewBox="0 0 100 100" className="h-64 w-full overflow-visible" preserveAspectRatio="none" role="img" aria-label="回撤曲线图">
+              {yTicks.map((tick, index) => {
+                const worstValue = Math.min(worst?.Drawdown ?? 0, -0.01);
+                const range = Math.max(Math.abs(worstValue), 0.01);
+                const y = ((0 - tick) / range) * 100;
+                return (
+                  <line
+                    key={`${tick}-${index}`}
+                    x1="0"
+                    y1={y}
+                    x2="100"
+                    y2={y}
+                    className={index === 0 || index === yTicks.length - 1 ? 'stroke-border' : 'stroke-border/70'}
+                    strokeWidth="0.7"
+                    vectorEffect="non-scaling-stroke"
+                  />
+                );
+              })}
+
+              {xTicks.map((tick, index) => (
+                <line
+                  key={`${tick.label}-${index}`}
+                  x1={tick.x}
+                  y1="0"
+                  x2={tick.x}
+                  y2="100"
+                  className="stroke-border/40"
+                  strokeWidth="0.7"
+                  vectorEffect="non-scaling-stroke"
+                />
+              ))}
+
+              {path ? (
+                <path d={path} fill="none" className="stroke-primary" strokeWidth="1.8" vectorEffect="non-scaling-stroke" />
+              ) : null}
+
+              {activePoint ? (
+                <>
+                  <line
+                    x1={activePoint.x}
+                    y1="0"
+                    x2={activePoint.x}
+                    y2="100"
+                    className="stroke-primary/50"
+                    strokeDasharray="2 2"
+                    strokeWidth="0.8"
+                    vectorEffect="non-scaling-stroke"
+                  />
+                  <circle cx={activePoint.x} cy={activePoint.y} r="2.2" className="fill-primary" />
+                </>
+              ) : null}
+
+              {points.map((point, index) => (
+                <circle
+                  key={`${point.label}-${index}`}
+                  cx={point.x}
+                  cy={point.y}
+                  r="4"
+                  fill="transparent"
+                  className="cursor-pointer"
+                  onClick={() => setActiveIndex(index)}
+                />
+              ))}
+            </svg>
+
+            <div className="mt-3 flex items-center justify-between text-[11px] text-muted-foreground">
+              {xTicks.map((tick, index) => (
+                <span key={`${tick.label}-${index}`}>{tick.label}</span>
+              ))}
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -111,10 +241,13 @@ const HomeView = () => {
   const [isDetailLoading, setIsDetailLoading] = useState(false);
   const [feedback, setFeedback] = useState('');
   const [feedbackTone, setFeedbackTone] = useState<FeedbackTone>('default');
+  const [selectedRange, setSelectedRange] = useState('1y');
+  const [availableRanges, setAvailableRanges] = useState<DrawdownRangeOptionDto[]>([]);
   const detailRequestCodeRef = useRef<string | null>(null);
   const searchRequestCodeRef = useRef('');
 
   const selectedItem = items.find((item) => item.ThsCode === selectedThsCode) ?? null;
+  const selectedRangeLabel = availableRanges.find((item) => item.Value === selectedRange)?.Label ?? '1年';
 
   const loadWatchlist = async () => {
     setIsLoading(true);
@@ -188,24 +321,27 @@ const HomeView = () => {
     const loadDetail = async () => {
       setIsDetailLoading(true);
       setSeries([]);
-      detailRequestCodeRef.current = selectedThsCode;
+      detailRequestCodeRef.current = `${selectedThsCode}:${selectedRange}`;
 
       try {
-        const response = await WatchlistManager.GetWatchlistItemDetail({ ThsCode: selectedThsCode });
+        const response = await WatchlistManager.GetWatchlistItemDetail({ ThsCode: selectedThsCode, Range: selectedRange });
         if (!response.Success) {
           setFeedbackTone('error');
           setFeedback(response.Message);
+          setAvailableRanges(response.AvailableRanges);
           setSeries([]);
           return;
         }
 
-        if (detailRequestCodeRef.current !== selectedThsCode) {
+        if (detailRequestCodeRef.current !== `${selectedThsCode}:${selectedRange}`) {
           return;
         }
 
+        setAvailableRanges(response.AvailableRanges);
+        setSelectedRange(response.SelectedRange);
         setSeries(response.DrawdownSeries);
       } catch {
-        if (detailRequestCodeRef.current !== selectedThsCode) {
+        if (detailRequestCodeRef.current !== `${selectedThsCode}:${selectedRange}`) {
           return;
         }
 
@@ -213,14 +349,14 @@ const HomeView = () => {
         setFeedback('加载回撤曲线失败。');
         setSeries([]);
       } finally {
-        if (detailRequestCodeRef.current === selectedThsCode) {
+        if (detailRequestCodeRef.current === `${selectedThsCode}:${selectedRange}`) {
           setIsDetailLoading(false);
         }
       }
     };
 
     void loadDetail();
-  }, [selectedThsCode]);
+  }, [selectedThsCode, selectedRange]);
 
   const handleAdd = async () => {
     if (isSubmitting) {
@@ -253,6 +389,7 @@ const HomeView = () => {
         setItems((current) => [response.Item!, ...current.filter((item) => item.ThsCode !== response.Item!.ThsCode)]);
       }
 
+      setSelectedRange('1y');
       setSelectedThsCode(response.Item.ThsCode);
       setCode('');
       setCandidates([]);
@@ -280,6 +417,7 @@ const HomeView = () => {
       setFeedback('删除成功');
 
       if (selectedThsCode === targetThsCode) {
+        setSelectedRange('1y');
         setSelectedThsCode(nextItems[0]?.ThsCode ?? null);
       }
     } catch {
@@ -425,7 +563,23 @@ const HomeView = () => {
 
           <Card className="border border-border/80 bg-card/90 shadow-none">
             <CardHeader>
-              <CardTitle>{selectedItem ? `${selectedItem.Name} · ${selectedItem.Code}` : '回撤详情'}</CardTitle>
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <CardTitle>{selectedItem ? `${selectedItem.Name} · ${selectedItem.Code}` : '回撤详情'}</CardTitle>
+                {selectedItem ? (
+                  <Select value={selectedRange} onValueChange={setSelectedRange}>
+                    <SelectTrigger className="w-[112px] bg-background">
+                      <SelectValue placeholder="选择周期" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {availableRanges.map((option) => (
+                        <SelectItem key={option.Value} value={option.Value}>
+                          {option.Label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                ) : null}
+              </div>
             </CardHeader>
             <CardContent>
               {!selectedItem ? (
@@ -435,7 +589,7 @@ const HomeView = () => {
               ) : series.length === 0 ? (
                 <div className="py-16 text-sm text-muted-foreground">当前没有可展示的回撤数据。</div>
               ) : (
-                <WatchlistChart series={series} />
+                <WatchlistChart series={series} rangeLabel={selectedRangeLabel} />
               )}
             </CardContent>
           </Card>

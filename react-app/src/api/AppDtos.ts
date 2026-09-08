@@ -27,17 +27,25 @@ export interface DrawdownPointDto {
   Drawdown: number;
 }
 
+export interface DrawdownRangeOptionDto {
+  Value: string;
+  Label: string;
+}
+
 export interface GetSessionRequestDto {
 }
 
 export interface GetWatchlistItemDetailRequestDto {
   ThsCode: string;
+  Range: string;
 }
 
 export interface GetWatchlistItemDetailResponseDto {
   Success: boolean;
   Message: string;
   Item: WatchlistItemSummaryDto | null;
+  SelectedRange: string;
+  AvailableRanges: DrawdownRangeOptionDto[];
   DrawdownSeries: DrawdownPointDto[];
 }
 

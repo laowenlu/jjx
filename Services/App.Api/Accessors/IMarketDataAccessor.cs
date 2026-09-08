@@ -6,5 +6,5 @@ public interface IMarketDataAccessor
 {
     Task<List<SearchedSecurityCandidate>> SearchSecurities(string query);
 
-    Task<ResolvedSecurityData?> GetSecurityData(string thsCode, string assetType);
+    Task<ResolvedSecurityData?> GetSecurityData(string thsCode, string assetType, string range);
 }
