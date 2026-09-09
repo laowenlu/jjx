@@ -5,8 +5,6 @@
 # Ignore binaries and object files across projects
 **/bin/
 **/obj/
-# Ignore binaries and object files across projects
-**/.bin/
 
 # Ignore IDE-specific files and settings
 .vs/
@@ -15,35 +13,13 @@
 # Ignore OS-generated files (macOS, Windows)
 .DS_Store
 
-# Ignore test outputs
-/api.Tests/bin/
-/api.Tests/obj/
-
-/Api.Server/bin/
-/Api.Server/obj/
-
-/Api.Core/bin/
-/Api.Core/obj/
-
-# Ignore specific Terraform files
-/Infrastructure/.terraform/
-/Infrastructure/.terraform.lock.hcl
-/Infrastructure/terraform.tfstate
-/Infrastructure/terraform.tfstate.backup
-/Infrastructure/plan.out
-
 # Ignore node_modules in case you're using Node.js
 **/node_modules/
 
-# Ride-specific config
-/rideConfig.json
+# Frontend build output
+**/dist/
 
-# Release artifacts
-**/bin/Release/
-/Api/Api.Server/appsettings.Test.json
-/Api/Api.Server/publish
-/dist
-
-/Services/App.Api/appsettings.Test.json
-
-
+# Local configuration and secrets
+**/.env
+**/.env.*
+!**/.env.example

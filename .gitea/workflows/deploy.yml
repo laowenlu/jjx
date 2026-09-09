@@ -6,19 +6,13 @@ on:
       SWA_DEPLOYMENT_TOKEN:
         description: 'Static Web Apps deployment token'
         required: true
-      APP_SERVICE_NAME:
-        description: 'Azure App Service name for the .NET API'
-        required: true
-      APP_SERVICE_PUBLISH_PROFILE:
-        description: 'Publish profile XML for the App Service'
+      VITE_HITHINK_API_KEY:
+        description: 'HiThink API key bundled into the frontend'
         required: true
 
 jobs:
   build-and-deploy:
     runs-on: linux_amd64
-    env:
-      DOTNET_INSTALL_DIR: $HOME/.dotnet
-      DOTNET_ROOT: $HOME/.dotnet
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -35,27 +29,11 @@ jobs:
 
       - name: Build frontend
         working-directory: react-app
+        env:
+          VITE_HITHINK_API_KEY: ${{ github.event.inputs.VITE_HITHINK_API_KEY }}
         run: npm run build
 
-      # ---------- Backend (.NET API) ----------
-      - name: Set up .NET (user install)
-        uses: actions/setup-dotnet@v4
-        env:
-          DOTNET_INSTALL_DIR: ${{ env.DOTNET_INSTALL_DIR }}
-        with:
-          dotnet-version: '8.0.x'
-
-      - name: Add dotnet to PATH
-        run: echo "$DOTNET_INSTALL_DIR" >> "$GITHUB_PATH"
-
-      - name: dotnet sanity
-        run: dotnet --info
-
-      - name: Publish API
-        working-directory: ./Services/App.Api
-        run: dotnet publish -c Release -o ./publish
-
-      # ---------- Deploy (both steps at the end) ----------
+      # ---------- Deploy ----------
       - name: Deploy Static Web App
         shell: bash
         run: |
@@ -79,10 +57,3 @@ jobs:
             echo "Static Web App deployment attempt ${attempt} failed; retrying in ${delay}s..."
             sleep "$delay"
           done
-
-      - name: Deploy API to Azure App Service
-        uses: azure/webapps-deploy@v2
-        with:
-          app-name: ${{ github.event.inputs.APP_SERVICE_NAME }}
-          publish-profile: ${{ github.event.inputs.APP_SERVICE_PUBLISH_PROFILE }}
-          package: ./Services/App.Api/publish

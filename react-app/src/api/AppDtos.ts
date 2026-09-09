@@ -1,14 +1,59 @@
+export interface AddWatchlistItemRequestDto {
+  Code: string;
+  ThsCode: string;
+  AssetType: string;
+  Name?: string;
+  SecurityType?: string;
+}
+
+export interface AddWatchlistItemResponseDto {
+  Success: boolean;
+  AlreadyExists: boolean;
+  Message: string;
+  Item: WatchlistItemSummaryDto | null;
+}
 
 export interface ChangePasswordRequestDto {
   NewPassword: string;
 }
 
-export interface CreateUserRequest {
-  Name: string;
-  Email: string;
+export interface DeleteWatchlistItemRequestDto {
+  ThsCode: string;
+}
+
+export interface DrawdownPointDto {
+  Date: string;
+  Price: number;
+  Drawdown: number;
+}
+
+export interface DrawdownRangeOptionDto {
+  Value: string;
+  Label: string;
 }
 
 export interface GetSessionRequestDto {
+}
+
+export interface GetWatchlistItemDetailRequestDto {
+  ThsCode: string;
+  Range: string;
+}
+
+export interface GetWatchlistItemDetailResponseDto {
+  Success: boolean;
+  Message: string;
+  Item: WatchlistItemSummaryDto | null;
+  SelectedRange: string;
+  AvailableRanges: DrawdownRangeOptionDto[];
+  DrawdownSeries: DrawdownPointDto[];
+}
+
+export interface GetWatchlistRequestDto {
+}
+
+export interface GetWatchlistResponseDto {
+  Items: WatchlistItemSummaryDto[];
 }
 
 export interface LoginRequestDto {
@@ -29,6 +74,15 @@ export interface OperationResultDto {
   Message: string;
 }
 
+export interface SearchWatchlistCandidatesRequestDto {
+  Query: string;
+}
+
+export interface SearchWatchlistCandidatesResponseDto {
+  Items: WatchlistSearchCandidateDto[];
+  Message: string;
+}
+
 export interface SendPasswordResetRequestDto {
   Email: string;
   RedirectUrl: string | null;
@@ -37,7 +91,7 @@ export interface SendPasswordResetRequestDto {
 export interface ServiceInvocationRequestDto {
   ManagerName: string;
   MethodName: string;
-  Parameters: any[] | null;
+  Parameters: (any | null)[] | null;
   AccessToken: string | null;
   RefreshToken: string | null;
 }
@@ -52,7 +106,7 @@ export interface ServiceInvocationResponseEnvelopeDto {
 export interface ServiceStreamingRequestDto {
   ManagerName: string;
   MethodName: string;
-  Parameters: any[] | null;
+  Parameters: (any | null)[] | null;
   AccessToken: string | null;
   RefreshToken: string | null;
 }
@@ -110,4 +164,24 @@ export interface UpdateUserPasswordDto {
 export interface UpdateUserPasswordResponseDto {
   Success: boolean;
   Message: string;
+}
+
+export interface WatchlistItemSummaryDto {
+  ThsCode: string;
+  Code: string;
+  Name: string;
+  SecurityType: string;
+  AssetType: string;
+  CurrentPrice: number | null;
+  MaxDrawdown: number | null;
+  DataWarning: string | null;
+  LastUpdatedUtc: string;
+}
+
+export interface WatchlistSearchCandidateDto {
+  ThsCode: string;
+  Code: string;
+  Name: string;
+  AssetType: string;
+  SecurityType: string;
 }

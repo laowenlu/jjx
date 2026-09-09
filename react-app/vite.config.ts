@@ -1,3 +1,4 @@
+import { loadEnv } from 'vite'
 import { defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react-swc'
 import tailwindcss from '@tailwindcss/vite'
@@ -7,7 +8,9 @@ import { fileURLToPath } from 'node:url'
 import { createRequire } from 'node:module'
 
 // Web-only starter: no Electron plugins referenced.
-export default defineConfig(async () => {
+export default defineConfig(async ({ mode }) => {
+  const env = loadEnv(mode, process.cwd(), '')
+  const base = env.VITE_BASE_PATH || '/'
   const checker = (await import('vite-plugin-checker')).default
 
   // Inline plugin: restart dev server when dependency manifests change (Vite v5 compatible)
@@ -72,14 +75,14 @@ export default defineConfig(async () => {
       short_name: name,
       description,
       icons: [
-        { src: '/img/favicon/16x16.png', sizes: '16x16', type: 'image/png' },
-        { src: '/img/favicon/32x32.png', sizes: '32x32', type: 'image/png' },
-        { src: '/img/favicon/180x180.png', sizes: '180x180', type: 'image/png' },
-        { src: '/img/favicon/192x192.png', sizes: '192x192', type: 'image/png' },
-        { src: '/img/favicon/512x512.png', sizes: '512x512', type: 'image/png' }
+        { src: `${base}img/favicon/16x16.png`, sizes: '16x16', type: 'image/png' },
+        { src: `${base}img/favicon/32x32.png`, sizes: '32x32', type: 'image/png' },
+        { src: `${base}img/favicon/180x180.png`, sizes: '180x180', type: 'image/png' },
+        { src: `${base}img/favicon/192x192.png`, sizes: '192x192', type: 'image/png' },
+        { src: `${base}img/favicon/512x512.png`, sizes: '512x512', type: 'image/png' },
       ],
-      start_url: '/',
-      scope: '/',
+      start_url: base,
+      scope: base,
       display: 'standalone',
       background_color: '#000000',
       theme_color: '#000000'
@@ -90,6 +93,7 @@ export default defineConfig(async () => {
   const srcPath = fileURLToPath(new URL('./src', import.meta.url))
 
   return {
+    base,
     build: { outDir: 'dist' },
     plugins: [
       react(),
@@ -105,7 +109,24 @@ export default defineConfig(async () => {
         '@/': `${srcPath}/`,
       },
     },
-    server: { port: 3000 },
+    server: {
+      host: '127.0.0.1',
+      port: 3000,
+      proxy: {
+        '/hithink-api': {
+          target: 'https://fuyao.aicubes.cn',
+          changeOrigin: true,
+          rewrite: (path: string) => path.replace(/^\/hithink-api/, ''),
+          configure: (proxy: any) => {
+            proxy.on('proxyReq', (proxyReq: any) => {
+              if (env.VITE_HITHINK_API_KEY) {
+                proxyReq.setHeader('X-api-key', env.VITE_HITHINK_API_KEY)
+              }
+            })
+          },
+        },
+      },
+    },
     test: {
       alias: { '@/': `${srcPath}/` },
       environment: 'jsdom',
