@@ -10,13 +10,7 @@ import type {
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { cn } from '@/lib/utils';
 
 type FeedbackTone = 'default' | 'error';
@@ -28,6 +22,11 @@ type ChartPoint = {
   drawdown: number;
   price: number;
 };
+
+const CHART_LEFT = 1;
+const CHART_WIDTH = 98;
+const CHART_TOP = 5;
+const CHART_HEIGHT = 90;
 
 const formatPrice = (value: number | null) => {
   if (value === null) {
@@ -45,184 +44,371 @@ const formatDrawdown = (value: number | null) => {
   return `${(value * 100).toFixed(2)}%`;
 };
 
-const WatchlistChart = ({
-  series,
-  rangeLabel,
-}: {
-  series: DrawdownPointDto[];
-  rangeLabel: string;
-}) => {
+const formatAxisPercent = (value: number) => {
+  if (Math.abs(value) < 0.000001) {
+    return '0%';
+  }
+
+  const percent = value * 100;
+  return `${percent.toFixed(Math.abs(percent) < 1 ? 1 : 0)}%`;
+};
+
+const getNiceTickStep = (roughStep: number) => {
+  const exponent = Math.floor(Math.log10(roughStep));
+  const magnitude = 10 ** exponent;
+  const normalized = roughStep / magnitude;
+  const niceNormalized = normalized <= 1 ? 1 : normalized <= 2 ? 2 : normalized <= 5 ? 5 : 10;
+  return niceNormalized * magnitude;
+};
+
+const getChartY = (drawdown: number, domainBottom: number) => CHART_TOP + (drawdown / domainBottom) * CHART_HEIGHT;
+
+const findClosestPointIndex = (points: ChartPoint[], targetX: number) => {
+  let low = 0;
+  let high = points.length - 1;
+
+  while (low < high) {
+    const middle = Math.floor((low + high) / 2);
+    if (points[middle].x < targetX) {
+      low = middle + 1;
+    } else {
+      high = middle;
+    }
+  }
+
+  if (low === 0) {
+    return 0;
+  }
+
+  return Math.abs(points[low].x - targetX) < Math.abs(points[low - 1].x - targetX) ? low : low - 1;
+};
+
+const WatchlistChart = ({ series, rangeLabel }: { series: DrawdownPointDto[]; rangeLabel: string }) => {
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
 
   useEffect(() => {
-    setActiveIndex(series.length > 0 ? series.length - 1 : null);
+    setActiveIndex(null);
   }, [series]);
+
+  const latest = series.at(-1);
+  const worstIndex = useMemo(() => {
+    if (series.length === 0) {
+      return -1;
+    }
+
+    return series.reduce(
+      (currentWorstIndex, item, index) =>
+        item.Drawdown < series[currentWorstIndex].Drawdown ? index : currentWorstIndex,
+      0
+    );
+  }, [series]);
+  const worst = worstIndex >= 0 ? series[worstIndex] : null;
+
+  const chartScale = useMemo(() => {
+    const minimumDepth = 0.01;
+    const deepestDrawdown = Math.max(Math.abs(worst?.Drawdown ?? 0), minimumDepth);
+    const tickStep = getNiceTickStep(deepestDrawdown / 4);
+    const tickCount = Math.max(1, Math.ceil(deepestDrawdown / tickStep));
+    const domainBottom = -(tickCount * tickStep);
+
+    return {
+      domainBottom,
+      yTicks: Array.from({ length: tickCount + 1 }, (_, index) => -(index * tickStep)),
+    };
+  }, [worst]);
 
   const points = useMemo<ChartPoint[]>(() => {
     if (series.length === 0) {
       return [];
     }
 
-    const minDrawdown = Math.min(...series.map((item) => item.Drawdown));
-    const range = Math.max(Math.abs(minDrawdown), 0.01);
+    const timestamps = series.map((item) => Date.parse(`${item.Date}T00:00:00Z`));
+    const hasValidTimeline = timestamps.every(Number.isFinite) && timestamps.at(-1)! > timestamps[0];
+    const timelineStart = timestamps[0];
+    const timelineSpan = timestamps.at(-1)! - timelineStart;
 
     return series.map((item, index) => ({
-      x: series.length === 1 ? 0 : (index / (series.length - 1)) * 100,
-      y: ((0 - item.Drawdown) / range) * 100,
+      x:
+        CHART_LEFT +
+        (hasValidTimeline
+          ? ((timestamps[index] - timelineStart) / timelineSpan) * CHART_WIDTH
+          : series.length === 1
+            ? CHART_WIDTH / 2
+            : (index / (series.length - 1)) * CHART_WIDTH),
+      y: getChartY(item.Drawdown, chartScale.domainBottom),
       label: item.Date,
       drawdown: item.Drawdown,
       price: item.Price,
     }));
-  }, [series]);
+  }, [chartScale.domainBottom, series]);
 
-  const path = points
-    .map((point, index) => `${index === 0 ? 'M' : 'L'} ${point.x} ${point.y}`)
-    .join(' ');
-
-  const latest = series.at(-1);
-  const worst = series.reduce<DrawdownPointDto | null>((currentWorst, item) => {
-    if (!currentWorst || item.Drawdown < currentWorst.Drawdown) {
-      return item;
-    }
-
-    return currentWorst;
-  }, null);
-
-  const yTicks = useMemo(() => {
-    const worstValue = Math.min(worst?.Drawdown ?? 0, -0.01);
-    return [0, worstValue / 2, worstValue];
-  }, [worst]);
+  const path = points.map((point, index) => `${index === 0 ? 'M' : 'L'} ${point.x} ${point.y}`).join(' ');
+  const areaPath =
+    points.length > 0
+      ? `M ${points[0].x} ${CHART_TOP} L ${points.map((point) => `${point.x} ${point.y}`).join(' L ')} L ${points.at(-1)!.x} ${CHART_TOP} Z`
+      : '';
 
   const xTicks = useMemo(() => {
     if (series.length === 0) {
       return [] as { x: number; label: string }[];
     }
 
-    const indexes = Array.from(new Set([
-      0,
-      Math.floor((series.length - 1) / 2),
-      series.length - 1,
-    ])).sort((a, b) => a - b);
+    const indexes = Array.from(
+      new Set([0, Math.floor((series.length - 1) / 3), Math.floor(((series.length - 1) * 2) / 3), series.length - 1])
+    ).sort((a, b) => a - b);
+    const showYear = series[0].Date.slice(0, 4) !== series.at(-1)!.Date.slice(0, 4);
 
     return indexes.map((index) => ({
-      x: series.length === 1 ? 0 : (index / (series.length - 1)) * 100,
-      label: series[index].Date,
+      x: points[index]?.x ?? CHART_LEFT,
+      label: showYear
+        ? series[index].Date.slice(0, 7).replace('-', '/')
+        : series[index].Date.slice(5).replace('-', '/'),
     }));
-  }, [series]);
+  }, [points, series]);
 
-  const activePoint = activeIndex !== null ? points[activeIndex] ?? null : null;
+  const activePoint = activeIndex !== null ? (points[activeIndex] ?? null) : null;
+  const worstPoint = worstIndex >= 0 ? points[worstIndex] : null;
+
+  const updateActivePoint = (clientX: number, element: HTMLDivElement) => {
+    if (points.length === 0) {
+      return;
+    }
+
+    const bounds = element.getBoundingClientRect();
+    const targetX = ((clientX - bounds.left) / bounds.width) * 100;
+    setActiveIndex(findClosestPointIndex(points, targetX));
+  };
 
   return (
     <div className="space-y-5">
-      <div className="flex flex-wrap items-end justify-between gap-3">
+      <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <p className="text-xs text-muted-foreground">{rangeLabel}回撤曲线</p>
-          <p className="mt-1 text-2xl font-semibold tracking-tight">{formatDrawdown(latest?.Drawdown ?? null)}</p>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {series[0]?.Date} — {series.at(-1)?.Date}
+          </p>
         </div>
-        <div className="text-right text-xs text-muted-foreground">
-          <p>最深回撤 {formatDrawdown(worst?.Drawdown ?? null)}</p>
-          <p className="mt-1">{series[0]?.Date} — {series.at(-1)?.Date}</p>
+        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <span className="inline-block size-2 rounded-full bg-sky-500" />
+          回撤率
         </div>
       </div>
 
-      {activePoint ? (
-        <div className="rounded-xl border border-border/80 bg-background/80 px-4 py-3 text-sm">
-          <div className="font-medium text-foreground">{activePoint.label}</div>
-          <div className="mt-1 flex flex-wrap gap-4 text-muted-foreground">
-            <span>价格 {formatPrice(activePoint.price)}</span>
-            <span>回撤 {formatDrawdown(activePoint.drawdown)}</span>
+      <div className="grid grid-cols-3 divide-x divide-border/70 rounded-xl border border-border/80 bg-background/80">
+        <div className="min-w-0 px-3 py-3 sm:px-4">
+          <div className="text-[11px] text-muted-foreground">当前回撤</div>
+          <div className="mt-1 truncate text-lg font-semibold tabular-nums">
+            {formatDrawdown(latest?.Drawdown ?? null)}
           </div>
         </div>
-      ) : null}
+        <div className="min-w-0 px-3 py-3 sm:px-4">
+          <div className="text-[11px] text-muted-foreground">最大回撤</div>
+          <div className="mt-1 truncate text-lg font-semibold text-destructive tabular-nums">
+            {formatDrawdown(worst?.Drawdown ?? null)}
+          </div>
+        </div>
+        <div className="min-w-0 px-3 py-3 sm:px-4">
+          <div className="text-[11px] text-muted-foreground">最新价格</div>
+          <div className="mt-1 truncate text-lg font-semibold tabular-nums">{formatPrice(latest?.Price ?? null)}</div>
+        </div>
+      </div>
 
-      <div className="rounded-xl border border-border/80 bg-muted/30 p-4">
-        <div className="grid grid-cols-[52px_minmax(0,1fr)] gap-3">
-          <div className="relative h-64 text-[11px] text-muted-foreground">
-            {yTicks.map((tick, index) => {
-              const worstValue = Math.min(worst?.Drawdown ?? 0, -0.01);
-              const range = Math.max(Math.abs(worstValue), 0.01);
-              const y = ((0 - tick) / range) * 100;
-              return (
-                <div key={`${tick}-${index}`} className="absolute left-0 right-0 -translate-y-1/2" style={{ top: `${y}%` }}>
-                  {formatDrawdown(tick)}
-                </div>
-              );
-            })}
+      <div className="rounded-xl border border-border/80 bg-background p-3 sm:p-4">
+        <div className="grid grid-cols-[42px_minmax(0,1fr)] gap-2 sm:grid-cols-[50px_minmax(0,1fr)] sm:gap-3">
+          <div className="relative h-72 text-right text-[10px] tabular-nums text-muted-foreground sm:text-[11px]">
+            {chartScale.yTicks.map((tick) => (
+              <div
+                key={tick}
+                className="absolute right-0 -translate-y-1/2"
+                style={{ top: `${getChartY(tick, chartScale.domainBottom)}%` }}
+              >
+                {formatAxisPercent(tick)}
+              </div>
+            ))}
           </div>
 
-          <div>
-            <svg viewBox="0 0 100 100" className="h-64 w-full overflow-visible" preserveAspectRatio="none" role="img" aria-label="回撤曲线图">
-              {yTicks.map((tick, index) => {
-                const worstValue = Math.min(worst?.Drawdown ?? 0, -0.01);
-                const range = Math.max(Math.abs(worstValue), 0.01);
-                const y = ((0 - tick) / range) * 100;
-                return (
+          <div className="min-w-0">
+            <div
+              className="relative h-72 cursor-crosshair touch-pan-y select-none rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              role="slider"
+              aria-label="回撤曲线，使用左右方向键查看每日数据"
+              aria-valuemin={0}
+              aria-valuemax={Math.max(points.length - 1, 0)}
+              aria-valuenow={activeIndex ?? 0}
+              aria-valuetext={
+                activePoint
+                  ? `${activePoint.label}，价格 ${formatPrice(activePoint.price)}，回撤 ${formatDrawdown(activePoint.drawdown)}`
+                  : undefined
+              }
+              tabIndex={0}
+              onPointerDown={(event) => updateActivePoint(event.clientX, event.currentTarget)}
+              onPointerMove={(event) => updateActivePoint(event.clientX, event.currentTarget)}
+              onPointerLeave={() => setActiveIndex(null)}
+              onFocus={() => setActiveIndex((current) => current ?? Math.max(points.length - 1, 0))}
+              onBlur={() => setActiveIndex(null)}
+              onKeyDown={(event) => {
+                if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') {
+                  return;
+                }
+
+                event.preventDefault();
+                const direction = event.key === 'ArrowLeft' ? -1 : 1;
+                setActiveIndex((current) =>
+                  Math.min(points.length - 1, Math.max(0, (current ?? points.length - 1) + direction))
+                );
+              }}
+            >
+              <svg
+                viewBox="0 0 100 100"
+                className="absolute inset-0 size-full overflow-visible"
+                preserveAspectRatio="none"
+                role="img"
+                aria-label="回撤曲线图"
+              >
+                <defs>
+                  <linearGradient id="drawdown-area-gradient" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="rgb(14 165 233)" stopOpacity="0.06" />
+                    <stop offset="100%" stopColor="rgb(14 165 233)" stopOpacity="0.3" />
+                  </linearGradient>
+                </defs>
+
+                {chartScale.yTicks.map((tick, index) => (
                   <line
-                    key={`${tick}-${index}`}
-                    x1="0"
-                    y1={y}
-                    x2="100"
-                    y2={y}
-                    className={index === 0 || index === yTicks.length - 1 ? 'stroke-border' : 'stroke-border/70'}
+                    key={tick}
+                    x1={CHART_LEFT}
+                    y1={getChartY(tick, chartScale.domainBottom)}
+                    x2={CHART_LEFT + CHART_WIDTH}
+                    y2={getChartY(tick, chartScale.domainBottom)}
+                    className={index === 0 ? 'stroke-border' : 'stroke-border/60'}
+                    strokeDasharray={index === 0 ? undefined : '3 3'}
+                    strokeWidth={index === 0 ? '1' : '0.7'}
+                    vectorEffect="non-scaling-stroke"
+                  />
+                ))}
+
+                {xTicks.map((tick, index) => (
+                  <line
+                    key={`${tick.label}-${index}`}
+                    x1={tick.x}
+                    y1={CHART_TOP}
+                    x2={tick.x}
+                    y2={CHART_TOP + CHART_HEIGHT}
+                    className="stroke-border/40"
+                    strokeDasharray="3 3"
                     strokeWidth="0.7"
                     vectorEffect="non-scaling-stroke"
                   />
-                );
-              })}
+                ))}
 
-              {xTicks.map((tick, index) => (
-                <line
-                  key={`${tick.label}-${index}`}
-                  x1={tick.x}
-                  y1="0"
-                  x2={tick.x}
-                  y2="100"
-                  className="stroke-border/40"
-                  strokeWidth="0.7"
-                  vectorEffect="non-scaling-stroke"
+                {areaPath ? <path d={areaPath} fill="url(#drawdown-area-gradient)" /> : null}
+
+                {path ? (
+                  <path
+                    d={path}
+                    fill="none"
+                    className="stroke-sky-500"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth="1.8"
+                    vectorEffect="non-scaling-stroke"
+                  />
+                ) : null}
+
+                {activePoint ? (
+                  <>
+                    <line
+                      x1={CHART_LEFT}
+                      y1={activePoint.y}
+                      x2={CHART_LEFT + CHART_WIDTH}
+                      y2={activePoint.y}
+                      className="stroke-foreground/25"
+                      strokeDasharray="3 3"
+                      strokeWidth="0.8"
+                      vectorEffect="non-scaling-stroke"
+                    />
+                    <line
+                      x1={activePoint.x}
+                      y1={CHART_TOP}
+                      x2={activePoint.x}
+                      y2={CHART_TOP + CHART_HEIGHT}
+                      className="stroke-foreground/35"
+                      strokeDasharray="3 3"
+                      strokeWidth="0.8"
+                      vectorEffect="non-scaling-stroke"
+                    />
+                  </>
+                ) : null}
+              </svg>
+
+              {worstPoint ? (
+                <div
+                  className="pointer-events-none absolute size-2 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-background bg-destructive shadow-sm"
+                  style={{ left: `${worstPoint.x}%`, top: `${worstPoint.y}%` }}
+                  title={`最大回撤 ${formatDrawdown(worstPoint.drawdown)}`}
                 />
-              ))}
-
-              {path ? (
-                <path d={path} fill="none" className="stroke-primary" strokeWidth="1.8" vectorEffect="non-scaling-stroke" />
               ) : null}
 
               {activePoint ? (
                 <>
-                  <line
-                    x1={activePoint.x}
-                    y1="0"
-                    x2={activePoint.x}
-                    y2="100"
-                    className="stroke-primary/50"
-                    strokeDasharray="2 2"
-                    strokeWidth="0.8"
-                    vectorEffect="non-scaling-stroke"
+                  <div
+                    className="pointer-events-none absolute size-3 -translate-x-1/2 -translate-y-1/2 rounded-full border-[3px] border-background bg-sky-500 shadow"
+                    style={{ left: `${activePoint.x}%`, top: `${activePoint.y}%` }}
                   />
-                  <circle cx={activePoint.x} cy={activePoint.y} r="2.2" className="fill-primary" />
+                  <div
+                    className={cn(
+                      'pointer-events-none absolute z-10 min-w-36 rounded-lg border border-border bg-popover/95 px-3 py-2 text-xs shadow-lg backdrop-blur-sm',
+                      activePoint.x < 20
+                        ? 'translate-x-2'
+                        : activePoint.x > 80
+                          ? '-translate-x-[calc(100%+0.5rem)]'
+                          : '-translate-x-1/2',
+                      activePoint.y < 30 ? 'translate-y-3' : '-translate-y-[calc(100%+0.75rem)]'
+                    )}
+                    style={{ left: `${activePoint.x}%`, top: `${activePoint.y}%` }}
+                  >
+                    <div className="font-medium text-popover-foreground">{activePoint.label}</div>
+                    <div className="mt-1.5 grid grid-cols-2 gap-x-4 gap-y-1 tabular-nums text-muted-foreground">
+                      <span>价格</span>
+                      <span className="text-right text-popover-foreground">{formatPrice(activePoint.price)}</span>
+                      <span>回撤</span>
+                      <span className="text-right font-medium text-destructive">
+                        {formatDrawdown(activePoint.drawdown)}
+                      </span>
+                    </div>
+                  </div>
                 </>
               ) : null}
+            </div>
 
-              {points.map((point, index) => (
-                <circle
-                  key={`${point.label}-${index}`}
-                  cx={point.x}
-                  cy={point.y}
-                  r="4"
-                  fill="transparent"
-                  className="cursor-pointer"
-                  onClick={() => setActiveIndex(index)}
-                />
-              ))}
-            </svg>
-
-            <div className="mt-3 flex items-center justify-between text-[11px] text-muted-foreground">
+            <div className="relative mt-2 h-4 text-[10px] tabular-nums text-muted-foreground sm:text-[11px]">
               {xTicks.map((tick, index) => (
-                <span key={`${tick.label}-${index}`}>{tick.label}</span>
+                <span
+                  key={`${tick.label}-${index}`}
+                  className={cn(
+                    'absolute whitespace-nowrap',
+                    index === 0
+                      ? 'translate-x-0'
+                      : index === xTicks.length - 1
+                        ? '-translate-x-full'
+                        : '-translate-x-1/2'
+                  )}
+                  style={{ left: `${tick.x}%` }}
+                >
+                  {tick.label}
+                </span>
               ))}
             </div>
           </div>
         </div>
+
+        {worst ? (
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-border/70 pt-3 text-xs text-muted-foreground">
+            <span>红点为区间最大回撤</span>
+            <span className="tabular-nums">
+              {worst.Date} · {formatDrawdown(worst.Drawdown)}
+            </span>
+          </div>
+        ) : null}
       </div>
     </div>
   );
@@ -255,9 +441,11 @@ const HomeView = () => {
     try {
       const response = await WatchlistManager.GetWatchlist({});
       setItems(response.Items);
-      setSelectedThsCode((current) => current && response.Items.some((item) => item.ThsCode === current)
-        ? current
-        : response.Items[0]?.ThsCode ?? null);
+      setSelectedThsCode((current) =>
+        current && response.Items.some((item) => item.ThsCode === current)
+          ? current
+          : (response.Items[0]?.ThsCode ?? null)
+      );
     } catch {
       setFeedbackTone('error');
       setFeedback('加载监控列表失败。');
@@ -272,7 +460,7 @@ const HomeView = () => {
 
   useEffect(() => {
     const normalized = code.trim();
-    setSelectedCandidate((current) => current?.Code === normalized ? current : null);
+    setSelectedCandidate((current) => (current?.Code === normalized ? current : null));
 
     if (normalized.length !== 6) {
       setCandidates([]);
@@ -294,12 +482,14 @@ const HomeView = () => {
         if (response.Items.length === 1) {
           setSelectedCandidate(response.Items[0]);
         }
-      } catch {
+      } catch (error) {
         if (searchRequestCodeRef.current !== normalized) {
           return;
         }
 
         setCandidates([]);
+        setFeedbackTone('error');
+        setFeedback(error instanceof Error ? error.message : '搜索同花顺数据失败，请检查 API Key 或网络连接。');
       } finally {
         if (searchRequestCodeRef.current === normalized) {
           setIsSearching(false);
@@ -324,7 +514,10 @@ const HomeView = () => {
       detailRequestCodeRef.current = `${selectedThsCode}:${selectedRange}`;
 
       try {
-        const response = await WatchlistManager.GetWatchlistItemDetail({ ThsCode: selectedThsCode, Range: selectedRange });
+        const response = await WatchlistManager.GetWatchlistItemDetail({
+          ThsCode: selectedThsCode,
+          Range: selectedRange,
+        });
         if (!response.Success) {
           setFeedbackTone('error');
           setFeedback(response.Message);
@@ -377,6 +570,8 @@ const HomeView = () => {
         Code: selectedCandidate.Code,
         ThsCode: selectedCandidate.ThsCode,
         AssetType: selectedCandidate.AssetType,
+        Name: selectedCandidate.Name,
+        SecurityType: selectedCandidate.SecurityType,
       });
       setFeedbackTone(response.Success || response.AlreadyExists ? 'default' : 'error');
       setFeedback(response.Message);
@@ -476,7 +671,9 @@ const HomeView = () => {
                         >
                           <div>
                             <div className="font-medium text-foreground">{candidate.Name}</div>
-                            <div className="mt-1 text-xs text-muted-foreground">{candidate.Code} · {candidate.SecurityType} · {candidate.ThsCode}</div>
+                            <div className="mt-1 text-xs text-muted-foreground">
+                              {candidate.Code} · {candidate.SecurityType} · {candidate.ThsCode}
+                            </div>
                           </div>
                           {isSelected ? <span className="text-xs text-muted-foreground">已选</span> : null}
                         </button>
@@ -520,7 +717,9 @@ const HomeView = () => {
                       <div className="flex items-start justify-between gap-3">
                         <div>
                           <div className="text-sm font-medium text-foreground">{item.Name}</div>
-                          <div className="mt-1 text-xs text-muted-foreground">{item.Code} · {item.SecurityType} · {item.ThsCode}</div>
+                          <div className="mt-1 text-xs text-muted-foreground">
+                            {item.Code} · {item.SecurityType} · {item.ThsCode}
+                          </div>
                         </div>
                         <Button
                           type="button"

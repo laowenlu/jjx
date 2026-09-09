@@ -1,9 +1,9 @@
-import { SampleEnum } from "./Enums";
-
 export interface AddWatchlistItemRequestDto {
   Code: string;
   ThsCode: string;
   AssetType: string;
+  Name?: string;
+  SecurityType?: string;
 }
 
 export interface AddWatchlistItemResponseDto {
@@ -185,4 +185,3 @@ export interface WatchlistSearchCandidateDto {
   AssetType: string;
   SecurityType: string;
 }
-
