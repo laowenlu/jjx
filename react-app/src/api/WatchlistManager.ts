@@ -24,6 +24,7 @@ const RANGE_OPTIONS: DrawdownRangeOptionDto[] = [
   { Value: '3y', Label: '3年' },
   { Value: '5y', Label: '5年' },
   { Value: '8y', Label: '8年' },
+  { Value: 'custom', Label: '自定义' },
 ];
 
 type ApiEnvelope<T> = { code: number; message?: string; data: T | null };
@@ -130,6 +131,26 @@ const getRangeStartTimestamp = (range: string) => {
   return date.getTime();
 };
 
+const getDateTimestamp = (value: string, endOfDay = false) => {
+  const timestamp = Date.parse(`${value}T${endOfDay ? '23:59:59.999' : '00:00:00'}Z`);
+  return Number.isFinite(timestamp) ? timestamp : null;
+};
+
+const getRangeTimestamps = (range: string, startDate?: string, endDate?: string) => {
+  if (range === 'custom' && startDate && endDate) {
+    const start = getDateTimestamp(startDate);
+    const end = getDateTimestamp(endDate, true);
+    if (start !== null && end !== null && end >= start) {
+      return { start, end };
+    }
+  }
+
+  return {
+    start: getRangeStartTimestamp(range),
+    end: Date.now(),
+  };
+};
+
 const getFundRange = (range: string) => {
   switch (range) {
     case '6m': return 'hyear';
@@ -194,16 +215,21 @@ const getHistoricalBars = async (path: string): Promise<HistoricalBar[]> => {
     .sort((left, right) => left.dateMs - right.dateMs);
 };
 
+const getHistoricalBarsInRange = (history: HistoricalBar[], start: number, end: number) =>
+  history.filter((point) => point.dateMs >= start && point.dateMs <= end);
+
 const getSecurityData = async (
   candidate: WatchlistSearchCandidateDto,
-  range: string
+  range: string,
+  customRange?: { startDate?: string; endDate?: string }
 ): Promise<SecurityData | null> => {
   const encodedCode = encodeURIComponent(candidate.ThsCode);
   const isFund = ['fund-otc', 'fund-etf', 'fund-lof', 'fund-reits'].includes(candidate.AssetType);
 
   if (isFund) {
+    const timestamps = getRangeTimestamps(range, customRange?.startDate, customRange?.endDate);
     const items = await getCollectionItems(
-      `/api/fund/performance/nav?fund_type=${getFundType(candidate.AssetType)}&thscode=${encodedCode}&range=${getFundRange(range)}&nav_type=unit%2Cadj`
+      `/api/fund/performance/nav?fund_type=${getFundType(candidate.AssetType)}&thscode=${encodedCode}&range=${getFundRange(range === 'custom' ? '8y' : range)}&nav_type=unit%2Cadj`
     );
     const history = items
       .map((item) => ({
@@ -212,11 +238,14 @@ const getSecurityData = async (
       }))
       .filter((item): item is HistoricalBar => item.dateMs !== null && item.price !== null)
       .sort((left, right) => left.dateMs - right.dateMs);
+    const filteredHistory = range === 'custom'
+      ? getHistoricalBarsInRange(history, timestamps.start, timestamps.end)
+      : history;
 
-    if (history.length === 0) return null;
+    if (filteredHistory.length === 0) return null;
     return {
-      currentPrice: history[history.length - 1].price,
-      history,
+      currentPrice: filteredHistory[filteredHistory.length - 1].price,
+      history: filteredHistory,
       dataWarning: candidate.AssetType === 'fund-etf' || candidate.AssetType === 'fund-lof'
         ? '当前展示基于基金净值口径，不是场内实时成交价。'
         : null,
@@ -224,11 +253,12 @@ const getSecurityData = async (
   }
 
   const endpoint = candidate.AssetType === 'a-share-index' ? 'a-share-index' : 'a-share';
+  const timestamps = getRangeTimestamps(range, customRange?.startDate, customRange?.endDate);
   const snapshotItems = await getCollectionItems(
     `/api/${endpoint}/prices/snapshot?thscodes=${encodedCode}`
   );
   const history = await getHistoricalBars(
-    `/api/${endpoint}/prices/historical?thscode=${encodedCode}&interval=1d&start=${getRangeStartTimestamp(range)}&end=${Date.now()}${endpoint === 'a-share' ? '&adjust=forward' : ''}`
+    `/api/${endpoint}/prices/historical?thscode=${encodedCode}&interval=1d&start=${timestamps.start}&end=${timestamps.end}${endpoint === 'a-share' ? '&adjust=forward' : ''}`
   );
 
   if (history.length === 0) return null;
@@ -390,7 +420,10 @@ const GetWatchlistItemDetail = async (
     AssetType: item.AssetType,
     SecurityType: item.SecurityType,
   };
-  const securityData = await getSecurityData(candidate, selectedRange);
+  const securityData = await getSecurityData(candidate, selectedRange, {
+    startDate: request.StartDate,
+    endDate: request.EndDate,
+  });
   if (!securityData || securityData.history.length === 0) {
     return {
       Success: false,

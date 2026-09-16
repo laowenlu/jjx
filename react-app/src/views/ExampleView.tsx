@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { zhCN } from 'date-fns/locale/zh-CN';
+import type { DateRange } from 'react-day-picker';
 import WatchlistManager from '@/api/WatchlistManager';
 import type {
   AddWatchlistItemResponseDto,
@@ -8,10 +10,13 @@ import type {
   WatchlistSearchCandidateDto,
 } from '@/api/AppDtos';
 import { Button } from '@/components/ui/button';
+import { Calendar } from '@/components/ui/calendar';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { cn } from '@/lib/utils';
+import { CalendarDays } from 'lucide-react';
 
 type FeedbackTone = 'default' | 'error';
 
@@ -27,6 +32,102 @@ const CHART_LEFT = 1;
 const CHART_WIDTH = 98;
 const CHART_TOP = 5;
 const CHART_HEIGHT = 90;
+
+const formatDate = (date: Date) => {
+  const year = date.getFullYear();
+  const month = `${date.getMonth() + 1}`.padStart(2, '0');
+  const day = `${date.getDate()}`.padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
+const parseDate = (value: string) => {
+  const [year, month, day] = value.split('-').map(Number);
+  return new Date(year, month - 1, day);
+};
+
+const getSeriesDateRange = (series: DrawdownPointDto[]): DateRange | undefined => {
+  if (series.length === 0) {
+    return undefined;
+  }
+
+  return {
+    from: parseDate(series[0].Date),
+    to: parseDate(series.at(-1)!.Date),
+  };
+};
+
+type DateRangePickerProps = {
+  range: DateRange | undefined;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onConfirm: (range: DateRange) => void;
+};
+
+const DateRangePicker = ({ range, open, onOpenChange, onConfirm }: DateRangePickerProps) => {
+  const [draftRange, setDraftRange] = useState<DateRange | undefined>(range);
+  const today = useMemo(() => new Date(), []);
+  const startMonth = useMemo(() => new Date(today.getFullYear() - 10, 0, 1), [today]);
+
+  useEffect(() => {
+    if (open) {
+      setDraftRange(range);
+    }
+  }, [open, range]);
+
+  const isComplete = Boolean(draftRange?.from && draftRange.to);
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="w-auto max-w-[calc(100%-2rem)] gap-3 p-4 sm:max-w-none">
+        <DialogHeader>
+          <DialogTitle>选择起止日期</DialogTitle>
+          <DialogDescription className="sr-only">选择回撤曲线的开始日期和结束日期。</DialogDescription>
+        </DialogHeader>
+        <Calendar
+          mode="range"
+          min={1}
+          selected={draftRange}
+          onSelect={setDraftRange}
+          defaultMonth={draftRange?.from ?? range?.from}
+          captionLayout="dropdown"
+          navLayout="around"
+          startMonth={startMonth}
+          endMonth={today}
+          disabled={{ after: today }}
+          locale={zhCN}
+          formatters={{
+            formatMonthDropdown: (date) => `${date.getMonth() + 1}月`,
+            formatYearDropdown: (date) => `${date.getFullYear()}年`,
+          }}
+        />
+        <div className="px-2 text-xs text-muted-foreground">
+          {draftRange?.from ? formatDate(draftRange.from) : '请选择开始日期'}
+          {' — '}
+          {draftRange?.to ? formatDate(draftRange.to) : '请选择结束日期'}
+        </div>
+        <div className="flex justify-end gap-2 border-t border-border pt-3">
+          <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+            取消
+          </Button>
+          <Button
+            type="button"
+            disabled={!isComplete}
+            onClick={() => {
+              if (!draftRange?.from || !draftRange.to) {
+                return;
+              }
+
+              onConfirm({ from: draftRange.from, to: draftRange.to });
+              onOpenChange(false);
+            }}
+          >
+            确定
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+};
 
 const formatPrice = (value: number | null) => {
   if (value === null) {
@@ -83,7 +184,15 @@ const findClosestPointIndex = (points: ChartPoint[], targetX: number) => {
   return Math.abs(points[low].x - targetX) < Math.abs(points[low - 1].x - targetX) ? low : low - 1;
 };
 
-const WatchlistChart = ({ series, rangeLabel }: { series: DrawdownPointDto[]; rangeLabel: string }) => {
+const WatchlistChart = ({
+  series,
+  rangeLabel,
+  onDateRangeOpen,
+}: {
+  series: DrawdownPointDto[];
+  rangeLabel: string;
+  onDateRangeOpen: () => void;
+}) => {
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
 
   useEffect(() => {
@@ -184,9 +293,14 @@ const WatchlistChart = ({ series, rangeLabel }: { series: DrawdownPointDto[]; ra
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <p className="text-xs text-muted-foreground">{rangeLabel}回撤曲线</p>
-          <p className="mt-1 text-sm text-muted-foreground">
+          <button
+            type="button"
+            onClick={onDateRangeOpen}
+            className="mt-1 text-left text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            aria-label="选择起止日期"
+          >
             {series[0]?.Date} — {series.at(-1)?.Date}
-          </p>
+          </button>
         </div>
         <div className="flex items-center gap-2 text-xs text-muted-foreground">
           <span className="inline-block size-2 rounded-full bg-sky-500" />
@@ -203,7 +317,7 @@ const WatchlistChart = ({ series, rangeLabel }: { series: DrawdownPointDto[]; ra
         </div>
         <div className="min-w-0 px-3 py-3 sm:px-4">
           <div className="text-[11px] text-muted-foreground">最大回撤</div>
-          <div className="mt-1 truncate text-lg font-semibold text-destructive tabular-nums">
+          <div className="mt-1 truncate text-lg font-semibold text-emerald-600 tabular-nums dark:text-emerald-400">
             {formatDrawdown(worst?.Drawdown ?? null)}
           </div>
         </div>
@@ -429,11 +543,35 @@ const HomeView = () => {
   const [feedbackTone, setFeedbackTone] = useState<FeedbackTone>('default');
   const [selectedRange, setSelectedRange] = useState('1y');
   const [availableRanges, setAvailableRanges] = useState<DrawdownRangeOptionDto[]>([]);
+  const [customDateRange, setCustomDateRange] = useState<DateRange | undefined>();
+  const [isDatePickerOpen, setIsDatePickerOpen] = useState(false);
   const detailRequestCodeRef = useRef<string | null>(null);
   const searchRequestCodeRef = useRef('');
 
   const selectedItem = items.find((item) => item.ThsCode === selectedThsCode) ?? null;
   const selectedRangeLabel = availableRanges.find((item) => item.Value === selectedRange)?.Label ?? '1年';
+
+  const handleDateRangeOpen = () => {
+    setCustomDateRange((current) => current ?? getSeriesDateRange(series));
+    setIsDatePickerOpen(true);
+  };
+
+  const handleRangeChange = (range: string) => {
+    if (range === 'custom') {
+      setCustomDateRange((current) => current ?? getSeriesDateRange(series));
+      window.setTimeout(() => setIsDatePickerOpen(true), 0);
+      return;
+    }
+
+    setCustomDateRange(undefined);
+    setIsDatePickerOpen(false);
+    setSelectedRange(range);
+  };
+
+  const handleCustomDateRangeConfirm = (range: DateRange) => {
+    setCustomDateRange(range);
+    setSelectedRange('custom');
+  };
 
   const loadWatchlist = async () => {
     setIsLoading(true);
@@ -508,17 +646,33 @@ const HomeView = () => {
       return;
     }
 
+    const startDate =
+      selectedRange === 'custom' && customDateRange?.from ? formatDate(customDateRange.from) : undefined;
+    const endDate = selectedRange === 'custom' && customDateRange?.to ? formatDate(customDateRange.to) : undefined;
+    const requestKey = `${selectedThsCode}:${selectedRange}:${startDate ?? ''}:${endDate ?? ''}`;
+    detailRequestCodeRef.current = requestKey;
+
+    if (selectedRange === 'custom' && (!customDateRange?.from || !customDateRange.to)) {
+      setIsDetailLoading(false);
+      return;
+    }
+
     const loadDetail = async () => {
       setIsDetailLoading(true);
       setSeries([]);
-      detailRequestCodeRef.current = `${selectedThsCode}:${selectedRange}`;
 
       try {
         const response = await WatchlistManager.GetWatchlistItemDetail({
           ThsCode: selectedThsCode,
           Range: selectedRange,
+          StartDate: startDate,
+          EndDate: endDate,
         });
         if (!response.Success) {
+          if (detailRequestCodeRef.current !== requestKey) {
+            return;
+          }
+
           setFeedbackTone('error');
           setFeedback(response.Message);
           setAvailableRanges(response.AvailableRanges);
@@ -526,15 +680,16 @@ const HomeView = () => {
           return;
         }
 
-        if (detailRequestCodeRef.current !== `${selectedThsCode}:${selectedRange}`) {
+        if (detailRequestCodeRef.current !== requestKey) {
           return;
         }
 
         setAvailableRanges(response.AvailableRanges);
         setSelectedRange(response.SelectedRange);
         setSeries(response.DrawdownSeries);
+        setFeedback((current) => (current === '当前周期的数据暂不可用。' ? '' : current));
       } catch {
-        if (detailRequestCodeRef.current !== `${selectedThsCode}:${selectedRange}`) {
+        if (detailRequestCodeRef.current !== requestKey) {
           return;
         }
 
@@ -542,14 +697,14 @@ const HomeView = () => {
         setFeedback('加载回撤曲线失败。');
         setSeries([]);
       } finally {
-        if (detailRequestCodeRef.current === `${selectedThsCode}:${selectedRange}`) {
+        if (detailRequestCodeRef.current === requestKey) {
           setIsDetailLoading(false);
         }
       }
     };
 
     void loadDetail();
-  }, [selectedThsCode, selectedRange]);
+  }, [customDateRange, selectedRange, selectedThsCode]);
 
   const handleAdd = async () => {
     if (isSubmitting) {
@@ -624,13 +779,9 @@ const HomeView = () => {
   return (
     <main className="min-h-screen bg-background px-4 py-8 text-foreground sm:px-6 lg:px-8">
       <section className="mx-auto flex w-full max-w-6xl flex-col gap-6">
-        <header className="space-y-2">
-          <h1 className="text-3xl font-semibold tracking-tight">监控列表</h1>
-          <p className="text-sm text-muted-foreground">查看基金、ETF、股票、指数近一年的最大回撤。</p>
-        </header>
-
+        {/* 输入框区域 */}
         <Card className="border border-border/80 bg-card/90 shadow-none">
-          <CardContent className="space-y-3 py-4">
+          <CardContent className="space-y-3">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
               <Input
                 value={code}
@@ -693,10 +844,8 @@ const HomeView = () => {
         ) : null}
 
         <div className="grid gap-6 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)] lg:items-start">
+          {/* 标的列表 */}
           <Card className="border border-border/80 bg-card/90 shadow-none">
-            <CardHeader>
-              <CardTitle>标的列表</CardTitle>
-            </CardHeader>
             <CardContent>
               {isLoading ? (
                 <div className="py-10 text-sm text-muted-foreground">加载中…</div>
@@ -710,15 +859,17 @@ const HomeView = () => {
                       type="button"
                       onClick={() => setSelectedThsCode(item.ThsCode)}
                       className={cn(
-                        'flex w-full flex-col gap-3 px-4 py-4 text-left transition-colors hover:bg-muted/40',
+                        'flex w-full flex-col gap-2 px-4 py-3 text-left transition-colors hover:bg-muted/40',
                         selectedThsCode === item.ThsCode && 'bg-muted/60'
                       )}
                     >
                       <div className="flex items-start justify-between gap-3">
                         <div>
-                          <div className="text-sm font-medium text-foreground">{item.Name}</div>
-                          <div className="mt-1 text-xs text-muted-foreground">
-                            {item.Code} · {item.SecurityType} · {item.ThsCode}
+                          <div className="text-sm font-medium text-foreground">
+                            {item.Name}{' '}
+                            <span className="text-xs font-normal text-muted-foreground">
+                              {item.SecurityType} · {item.ThsCode}
+                            </span>
                           </div>
                         </div>
                         <Button
@@ -735,14 +886,16 @@ const HomeView = () => {
                         </Button>
                       </div>
 
-                      <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-3">
+                      <div className="grid grid-cols-2 gap-2 text-sm sm:grid-cols-3">
                         <div>
                           <div className="text-xs text-muted-foreground">现价</div>
                           <div className="mt-1 font-medium">{formatPrice(item.CurrentPrice)}</div>
                         </div>
                         <div>
-                          <div className="text-xs text-muted-foreground">最大回撤</div>
-                          <div className="mt-1 font-medium">{formatDrawdown(item.MaxDrawdown)}</div>
+                          <div className="text-xs text-muted-foreground">近1年最大回撤</div>
+                          <div className="mt-1 font-medium text-emerald-600 dark:text-emerald-400">
+                            {formatDrawdown(item.MaxDrawdown)}
+                          </div>
                         </div>
                         <div>
                           <div className="text-xs text-muted-foreground">更新时间</div>
@@ -761,25 +914,45 @@ const HomeView = () => {
           </Card>
 
           <Card className="border border-border/80 bg-card/90 shadow-none">
+            {/* 图表头 */}
             <CardHeader>
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <CardTitle>{selectedItem ? `${selectedItem.Name} · ${selectedItem.Code}` : '回撤详情'}</CardTitle>
                 {selectedItem ? (
-                  <Select value={selectedRange} onValueChange={setSelectedRange}>
-                    <SelectTrigger className="w-[112px] bg-background">
-                      <SelectValue placeholder="选择周期" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {availableRanges.map((option) => (
-                        <SelectItem key={option.Value} value={option.Value}>
-                          {option.Label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <div className="flex items-center gap-2">
+                    <DateRangePicker
+                      range={customDateRange}
+                      open={isDatePickerOpen}
+                      onOpenChange={setIsDatePickerOpen}
+                      onConfirm={handleCustomDateRangeConfirm}
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon-sm"
+                      onClick={handleDateRangeOpen}
+                      aria-label="选择起止日期"
+                      title="选择起止日期"
+                    >
+                      <CalendarDays />
+                    </Button>
+                    <Select value={selectedRange} onValueChange={handleRangeChange}>
+                      <SelectTrigger className="w-[112px] bg-background">
+                        <SelectValue placeholder="选择周期" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {availableRanges.map((option) => (
+                          <SelectItem key={option.Value} value={option.Value}>
+                            {option.Label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
                 ) : null}
               </div>
             </CardHeader>
+            {/* 图表 */}
             <CardContent>
               {!selectedItem ? (
                 <div className="py-16 text-sm text-muted-foreground">选择一个标的后查看回撤曲线。</div>
@@ -788,7 +961,7 @@ const HomeView = () => {
               ) : series.length === 0 ? (
                 <div className="py-16 text-sm text-muted-foreground">当前没有可展示的回撤数据。</div>
               ) : (
-                <WatchlistChart series={series} rangeLabel={selectedRangeLabel} />
+                <WatchlistChart series={series} rangeLabel={selectedRangeLabel} onDateRangeOpen={handleDateRangeOpen} />
               )}
             </CardContent>
           </Card>

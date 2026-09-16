@@ -38,6 +38,8 @@ export interface GetSessionRequestDto {
 export interface GetWatchlistItemDetailRequestDto {
   ThsCode: string;
   Range: string;
+  StartDate?: string;
+  EndDate?: string;
 }
 
 export interface GetWatchlistItemDetailResponseDto {
