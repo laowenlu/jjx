@@ -28,6 +28,11 @@ type ChartPoint = {
   price: number;
 };
 
+type DetailDateRange = {
+  StartDate: string;
+  EndDate: string;
+};
+
 const CHART_LEFT = 1;
 const CHART_WIDTH = 98;
 const CHART_TOP = 5;
@@ -134,7 +139,7 @@ const formatPrice = (value: number | null) => {
     return '—';
   }
 
-  return value.toFixed(2);
+  return String(value);
 };
 
 const formatDrawdown = (value: number | null) => {
@@ -187,10 +192,12 @@ const findClosestPointIndex = (points: ChartPoint[], targetX: number) => {
 const WatchlistChart = ({
   series,
   rangeLabel,
+  dateRange,
   onDateRangeOpen,
 }: {
   series: DrawdownPointDto[];
   rangeLabel: string;
+  dateRange: DetailDateRange;
   onDateRangeOpen: () => void;
 }) => {
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
@@ -299,8 +306,9 @@ const WatchlistChart = ({
             className="mt-1 text-left text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             aria-label="选择起止日期"
           >
-            {series[0]?.Date} — {series.at(-1)?.Date}
+            {dateRange.StartDate} — {dateRange.EndDate}
           </button>
+          <p className="mt-1 text-xs text-muted-foreground">实际数据截至 {series.at(-1)?.Date}</p>
         </div>
         <div className="flex items-center gap-2 text-xs text-muted-foreground">
           <span className="inline-block size-2 rounded-full bg-sky-500" />
@@ -544,6 +552,7 @@ const HomeView = () => {
   const [selectedRange, setSelectedRange] = useState('1y');
   const [availableRanges, setAvailableRanges] = useState<DrawdownRangeOptionDto[]>([]);
   const [customDateRange, setCustomDateRange] = useState<DateRange | undefined>();
+  const [detailDateRange, setDetailDateRange] = useState<DetailDateRange | null>(null);
   const [isDatePickerOpen, setIsDatePickerOpen] = useState(false);
   const detailRequestCodeRef = useRef<string | null>(null);
   const searchRequestCodeRef = useRef('');
@@ -551,14 +560,22 @@ const HomeView = () => {
   const selectedItem = items.find((item) => item.ThsCode === selectedThsCode) ?? null;
   const selectedRangeLabel = availableRanges.find((item) => item.Value === selectedRange)?.Label ?? '1年';
 
+  const getPickerInitialRange = () =>
+    detailDateRange
+      ? {
+          from: parseDate(detailDateRange.StartDate),
+          to: parseDate(detailDateRange.EndDate),
+        }
+      : getSeriesDateRange(series);
+
   const handleDateRangeOpen = () => {
-    setCustomDateRange((current) => current ?? getSeriesDateRange(series));
+    setCustomDateRange((current) => current ?? getPickerInitialRange());
     setIsDatePickerOpen(true);
   };
 
   const handleRangeChange = (range: string) => {
     if (range === 'custom') {
-      setCustomDateRange((current) => current ?? getSeriesDateRange(series));
+      setCustomDateRange((current) => current ?? getPickerInitialRange());
       window.setTimeout(() => setIsDatePickerOpen(true), 0);
       return;
     }
@@ -660,6 +677,7 @@ const HomeView = () => {
     const loadDetail = async () => {
       setIsDetailLoading(true);
       setSeries([]);
+      setDetailDateRange(null);
 
       try {
         const response = await WatchlistManager.GetWatchlistItemDetail({
@@ -676,6 +694,10 @@ const HomeView = () => {
           setFeedbackTone('error');
           setFeedback(response.Message);
           setAvailableRanges(response.AvailableRanges);
+          setDetailDateRange({
+            StartDate: response.RangeStartDate,
+            EndDate: response.RangeEndDate,
+          });
           setSeries([]);
           return;
         }
@@ -686,6 +708,10 @@ const HomeView = () => {
 
         setAvailableRanges(response.AvailableRanges);
         setSelectedRange(response.SelectedRange);
+        setDetailDateRange({
+          StartDate: response.RangeStartDate,
+          EndDate: response.RangeEndDate,
+        });
         setSeries(response.DrawdownSeries);
         setFeedback((current) => (current === '当前周期的数据暂不可用。' ? '' : current));
       } catch {
@@ -898,8 +924,8 @@ const HomeView = () => {
                           </div>
                         </div>
                         <div>
-                          <div className="text-xs text-muted-foreground">更新时间</div>
-                          <div className="mt-1 font-medium">{item.LastUpdatedUtc.slice(0, 10)}</div>
+                          <div className="text-xs text-muted-foreground">最新数据日期</div>
+                          <div className="mt-1 font-medium">{item.LatestDataDate ?? '—'}</div>
                         </div>
                       </div>
 
@@ -960,8 +986,15 @@ const HomeView = () => {
                 <div className="py-16 text-sm text-muted-foreground">曲线加载中…</div>
               ) : series.length === 0 ? (
                 <div className="py-16 text-sm text-muted-foreground">当前没有可展示的回撤数据。</div>
+              ) : detailDateRange ? (
+                <WatchlistChart
+                  series={series}
+                  rangeLabel={selectedRangeLabel}
+                  dateRange={detailDateRange}
+                  onDateRangeOpen={handleDateRangeOpen}
+                />
               ) : (
-                <WatchlistChart series={series} rangeLabel={selectedRangeLabel} onDateRangeOpen={handleDateRangeOpen} />
+                <div className="py-16 text-sm text-muted-foreground">曲线加载中…</div>
               )}
             </CardContent>
           </Card>

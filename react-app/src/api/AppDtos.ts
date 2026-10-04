@@ -47,6 +47,8 @@ export interface GetWatchlistItemDetailResponseDto {
   Message: string;
   Item: WatchlistItemSummaryDto | null;
   SelectedRange: string;
+  RangeStartDate: string;
+  RangeEndDate: string;
   AvailableRanges: DrawdownRangeOptionDto[];
   DrawdownSeries: DrawdownPointDto[];
 }
@@ -177,6 +179,7 @@ export interface WatchlistItemSummaryDto {
   CurrentPrice: number | null;
   MaxDrawdown: number | null;
   DataWarning: string | null;
+  LatestDataDate: string;
   LastUpdatedUtc: string;
 }
 

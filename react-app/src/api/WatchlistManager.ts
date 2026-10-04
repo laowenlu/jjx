@@ -29,12 +29,20 @@ const RANGE_OPTIONS: DrawdownRangeOptionDto[] = [
 
 type ApiEnvelope<T> = { code: number; message?: string; data: T | null };
 type CollectionData = { item?: Record<string, unknown>[] };
-type HistoricalBar = { dateMs: number; price: number };
+type HistoricalBar = { dateMs: number; price: number; drawdownPrice?: number };
 type SecurityData = {
   currentPrice: number | null;
   history: HistoricalBar[];
   dataWarning: string | null;
 };
+type RangeTimestamps = { start: number; end: number };
+
+const SHANGHAI_DATE_FORMATTER = new Intl.DateTimeFormat('zh-CN', {
+  timeZone: 'Asia/Shanghai',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+});
 
 const getApiKey = () => {
   const apiKey = import.meta.env.VITE_HITHINK_API_KEY;
@@ -48,9 +56,8 @@ const getApiKey = () => {
 const request = async <T>(path: string): Promise<T> => {
   const apiKey = getApiKey();
   const response = await fetch(`${BASE_URL}${path}`, {
-    headers: import.meta.env.DEV
-      ? { Accept: 'application/json' }
-      : { Accept: 'application/json', 'X-api-key': apiKey },
+    cache: 'no-store',
+    headers: import.meta.env.DEV ? { Accept: 'application/json' } : { Accept: 'application/json', 'X-api-key': apiKey },
   });
 
   if (!response.ok) {
@@ -84,19 +91,24 @@ const readDateMs = (value: unknown): number | null => {
   return null;
 };
 
-const readString = (value: unknown): string | null => (
-  typeof value === 'string' && value.trim() ? value : null
-);
+const readString = (value: unknown): string | null => (typeof value === 'string' && value.trim() ? value : null);
 
 const mapSecurityType = (assetType: string) => {
   switch (assetType) {
-    case 'a-share': return '股票';
-    case 'a-share-index': return '指数';
-    case 'fund-etf': return 'ETF';
-    case 'fund-lof': return 'LOF';
-    case 'fund-reits': return 'REITs';
-    case 'fund-otc': return '基金';
-    default: return assetType || '标的';
+    case 'a-share':
+      return '股票';
+    case 'a-share-index':
+      return '指数';
+    case 'fund-etf':
+      return 'ETF';
+    case 'fund-lof':
+      return 'LOF';
+    case 'fund-reits':
+      return 'REITs';
+    case 'fund-otc':
+      return '基金';
+    default:
+      return assetType || '标的';
   }
 };
 
@@ -106,7 +118,7 @@ const readStoredItems = (): WatchlistItemSummaryDto[] => {
 
   try {
     const parsed = JSON.parse(stored) as unknown;
-    return Array.isArray(parsed) ? parsed as WatchlistItemSummaryDto[] : [];
+    return Array.isArray(parsed) ? (parsed as WatchlistItemSummaryDto[]) : [];
   } catch {
     localStorage.removeItem(WATCHLIST_STORAGE_KEY);
     return [];
@@ -119,24 +131,40 @@ const writeStoredItems = (items: WatchlistItemSummaryDto[]) => {
 
 const getRangeStartTimestamp = (range: string) => {
   const date = new Date();
+  date.setHours(0, 0, 0, 0);
   switch (range) {
-    case '6m': date.setMonth(date.getMonth() - 6); break;
-    case '2y': date.setFullYear(date.getFullYear() - 2); break;
-    case '3y': date.setFullYear(date.getFullYear() - 3); break;
-    case '5y': date.setFullYear(date.getFullYear() - 5); break;
-    case '8y': date.setFullYear(date.getFullYear() - 8); break;
+    case '6m':
+      date.setMonth(date.getMonth() - 6);
+      break;
+    case '2y':
+      date.setFullYear(date.getFullYear() - 2);
+      break;
+    case '3y':
+      date.setFullYear(date.getFullYear() - 3);
+      break;
+    case '5y':
+      date.setFullYear(date.getFullYear() - 5);
+      break;
+    case '8y':
+      date.setFullYear(date.getFullYear() - 8);
+      break;
     case '1y':
-    default: date.setFullYear(date.getFullYear() - 1); break;
+    default:
+      date.setFullYear(date.getFullYear() - 1);
+      break;
   }
   return date.getTime();
 };
 
 const getDateTimestamp = (value: string, endOfDay = false) => {
-  const timestamp = Date.parse(`${value}T${endOfDay ? '23:59:59.999' : '00:00:00'}Z`);
-  return Number.isFinite(timestamp) ? timestamp : null;
+  const [year, month, day] = value.split('-').map(Number);
+  if (!year || !month || !day) return null;
+  const date = new Date(year, month - 1, day);
+  date.setHours(endOfDay ? 23 : 0, endOfDay ? 59 : 0, endOfDay ? 59 : 0, endOfDay ? 999 : 0);
+  return Number.isNaN(date.getTime()) ? null : date.getTime();
 };
 
-const getRangeTimestamps = (range: string, startDate?: string, endDate?: string) => {
+const getRangeTimestamps = (range: string, startDate?: string, endDate?: string): RangeTimestamps => {
   if (range === 'custom' && startDate && endDate) {
     const start = getDateTimestamp(startDate);
     const end = getDateTimestamp(endDate, true);
@@ -145,21 +173,36 @@ const getRangeTimestamps = (range: string, startDate?: string, endDate?: string)
     }
   }
 
+  const end = new Date();
+  end.setHours(23, 59, 59, 999);
   return {
     start: getRangeStartTimestamp(range),
-    end: Date.now(),
+    end: end.getTime(),
   };
+};
+
+const formatShanghaiDate = (timestamp: number) => {
+  const parts = SHANGHAI_DATE_FORMATTER.formatToParts(new Date(timestamp));
+  const year = parts.find((part) => part.type === 'year')?.value;
+  const month = parts.find((part) => part.type === 'month')?.value;
+  const day = parts.find((part) => part.type === 'day')?.value;
+  return year && month && day ? `${year}-${month}-${day}` : new Date(timestamp).toISOString().slice(0, 10);
 };
 
 const getFundRange = (range: string) => {
   switch (range) {
-    case '6m': return 'hyear';
-    case '2y': return 'twoyear';
-    case '3y': return 'tyear';
+    case '6m':
+      return 'hyear';
+    case '2y':
+      return 'twoyear';
+    case '3y':
+      return 'tyear';
     case '5y':
-    case '8y': return 'fyear';
+    case '8y':
+      return 'fyear';
     case '1y':
-    default: return 'year';
+    default:
+      return 'year';
   }
 };
 
@@ -174,32 +217,32 @@ const getCollectionItems = async (path: string) => {
   return data.item ?? [];
 };
 
-const searchStandardIndexesByTicker = async (
-  ticker: string
-): Promise<WatchlistSearchCandidateDto[]> => {
+const searchStandardIndexesByTicker = async (ticker: string): Promise<WatchlistSearchCandidateDto[]> => {
   const exchanges = [
     { code: `${ticker}.SH`, name: '上证指数' },
     { code: `${ticker}.SZ`, name: '深证成指' },
   ];
 
-  const results = await Promise.all(exchanges.map(async ({ code, name }) => {
-    try {
-      const items = await getCollectionItems(
-        `/api/a-share-index/prices/snapshot?thscodes=${encodeURIComponent(code)}`
-      );
-      if (items.length === 0) return null;
+  const results = await Promise.all(
+    exchanges.map(async ({ code, name }) => {
+      try {
+        const items = await getCollectionItems(
+          `/api/a-share-index/prices/snapshot?thscodes=${encodeURIComponent(code)}`
+        );
+        if (items.length === 0) return null;
 
-      return {
-        ThsCode: code,
-        Code: ticker,
-        Name: name,
-        AssetType: 'a-share-index',
-        SecurityType: '指数',
-      };
-    } catch {
-      return null;
-    }
-  }));
+        return {
+          ThsCode: code,
+          Code: ticker,
+          Name: name,
+          AssetType: 'a-share-index',
+          SecurityType: '指数',
+        };
+      } catch {
+        return null;
+      }
+    })
+  );
 
   return results.filter((item): item is WatchlistSearchCandidateDto => item !== null);
 };
@@ -215,50 +258,106 @@ const getHistoricalBars = async (path: string): Promise<HistoricalBar[]> => {
     .sort((left, right) => left.dateMs - right.dateMs);
 };
 
+const getEtfHistoricalBars = async (
+  encodedCode: string,
+  rangeTimestamps: RangeTimestamps
+): Promise<HistoricalBar[]> => {
+  const windows: RangeTimestamps[] = [];
+  let windowStart = rangeTimestamps.start;
+
+  while (windowStart <= rangeTimestamps.end) {
+    const maxWindowEnd = new Date(windowStart);
+    maxWindowEnd.setFullYear(maxWindowEnd.getFullYear() + 5);
+    const windowEnd = Math.min(rangeTimestamps.end, maxWindowEnd.getTime() - 1);
+    windows.push({ start: windowStart, end: windowEnd });
+
+    if (windowEnd >= rangeTimestamps.end) {
+      break;
+    }
+    windowStart = windowEnd + 1;
+  }
+
+  const histories = await Promise.all(
+    windows.map(({ start, end }) =>
+      getHistoricalBars(`/api/fund/market/historical?thscode=${encodedCode}&interval=1d&start=${start}&end=${end}`)
+    )
+  );
+  const historyByDate = new Map<number, HistoricalBar>();
+  histories.flat().forEach((point) => historyByDate.set(point.dateMs, point));
+  return [...historyByDate.values()].sort((left, right) => left.dateMs - right.dateMs);
+};
+
 const getHistoricalBarsInRange = (history: HistoricalBar[], start: number, end: number) =>
   history.filter((point) => point.dateMs >= start && point.dateMs <= end);
 
 const getSecurityData = async (
   candidate: WatchlistSearchCandidateDto,
   range: string,
-  customRange?: { startDate?: string; endDate?: string }
+  customRange?: { startDate?: string; endDate?: string },
+  rangeTimestamps = getRangeTimestamps(range, customRange?.startDate, customRange?.endDate)
 ): Promise<SecurityData | null> => {
   const encodedCode = encodeURIComponent(candidate.ThsCode);
   const isFund = ['fund-otc', 'fund-etf', 'fund-lof', 'fund-reits'].includes(candidate.AssetType);
 
+  if (candidate.AssetType === 'fund-etf') {
+    const [snapshotItems, history] = await Promise.all([
+      getCollectionItems(`/api/fund/market/snapshot?thscode=${encodedCode}`),
+      getEtfHistoricalBars(encodedCode, rangeTimestamps),
+    ]);
+
+    if (history.length === 0) return null;
+    return {
+      currentPrice: readNumber(snapshotItems[0]?.last_price) ?? history[history.length - 1].price,
+      history,
+      dataWarning: null,
+    };
+  }
+
   if (isFund) {
-    const timestamps = getRangeTimestamps(range, customRange?.startDate, customRange?.endDate);
     const items = await getCollectionItems(
       `/api/fund/performance/nav?fund_type=${getFundType(candidate.AssetType)}&thscode=${encodedCode}&range=${getFundRange(range === 'custom' ? '8y' : range)}&nav_type=unit%2Cadj`
     );
     const history = items
-      .map((item) => ({
-        dateMs: readDateMs(item.nav_date) ?? readDateMs(item.date_ms),
-        price: readNumber(item.adj_nav) ?? readNumber(item.unit_nav),
-      }))
-      .filter((item): item is HistoricalBar => item.dateMs !== null && item.price !== null)
+      .map((item): HistoricalBar | null => {
+        const unitNav = readNumber(item.unit_nav);
+        const adjustedNav = readNumber(item.adj_nav) ?? unitNav;
+        const dateMs = readDateMs(item.nav_date) ?? readDateMs(item.date_ms);
+        const price = candidate.AssetType === 'fund-otc' ? unitNav : adjustedNav;
+        if (dateMs === null || price === null) return null;
+        return {
+          dateMs,
+          price,
+          // 单位净值用于展示，复权净值用于消除分红对回撤计算的影响。
+          drawdownPrice: adjustedNav ?? undefined,
+        };
+      })
+      .filter((item): item is HistoricalBar => item !== null)
       .sort((left, right) => left.dateMs - right.dateMs);
-    const filteredHistory = range === 'custom'
-      ? getHistoricalBarsInRange(history, timestamps.start, timestamps.end)
-      : history;
+    const filteredHistory =
+      range === 'custom' ? getHistoricalBarsInRange(history, rangeTimestamps.start, rangeTimestamps.end) : history;
 
     if (filteredHistory.length === 0) return null;
+    let currentPrice = history[history.length - 1].price;
+    if (candidate.AssetType === 'fund-lof') {
+      try {
+        const snapshotItems = await getCollectionItems(`/api/fund/market/snapshot?thscode=${encodedCode}`);
+        currentPrice = readNumber(snapshotItems[0]?.last_price) ?? currentPrice;
+      } catch {
+        // LOF 历史成交日线不可用，快照失败时继续使用最新净值。
+      }
+    }
+
     return {
-      currentPrice: filteredHistory[filteredHistory.length - 1].price,
+      currentPrice,
       history: filteredHistory,
-      dataWarning: candidate.AssetType === 'fund-etf' || candidate.AssetType === 'fund-lof'
-        ? '当前展示基于基金净值口径，不是场内实时成交价。'
-        : null,
+      dataWarning: candidate.AssetType === 'fund-lof' ? '现价为场内最新成交价，回撤曲线基于基金净值口径。' : null,
     };
   }
 
   const endpoint = candidate.AssetType === 'a-share-index' ? 'a-share-index' : 'a-share';
-  const timestamps = getRangeTimestamps(range, customRange?.startDate, customRange?.endDate);
-  const snapshotItems = await getCollectionItems(
-    `/api/${endpoint}/prices/snapshot?thscodes=${encodedCode}`
-  );
+  const snapshotItems = await getCollectionItems(`/api/${endpoint}/prices/snapshot?thscodes=${encodedCode}`);
   const history = await getHistoricalBars(
-    `/api/${endpoint}/prices/historical?thscode=${encodedCode}&interval=1d&start=${timestamps.start}&end=${timestamps.end}${endpoint === 'a-share' ? '&adjust=forward' : ''}`
+    `/api/${endpoint}/prices/historical?thscode=${encodedCode}&interval=1d&start=${rangeTimestamps.start}&end=${rangeTimestamps.end}${endpoint === 'a-share' ? '&adjust=forward' : ''}`
   );
 
   if (history.length === 0) return null;
@@ -273,11 +372,12 @@ const calculateDrawdown = (history: HistoricalBar[]) => {
   let peak = 0;
   let maxDrawdown = 0;
   const series = history.map((point) => {
-    peak = Math.max(peak, point.price);
-    const drawdown = peak === 0 ? 0 : point.price / peak - 1;
+    const drawdownPrice = point.drawdownPrice ?? point.price;
+    peak = Math.max(peak, drawdownPrice);
+    const drawdown = peak === 0 ? 0 : drawdownPrice / peak - 1;
     maxDrawdown = Math.min(maxDrawdown, drawdown);
     return {
-      Date: new Date(point.dateMs).toISOString().slice(0, 10),
+      Date: formatShanghaiDate(point.dateMs),
       Price: point.price,
       Drawdown: drawdown,
     };
@@ -298,8 +398,50 @@ const toSummary = (
   CurrentPrice: securityData.currentPrice,
   MaxDrawdown: maxDrawdown,
   DataWarning: securityData.dataWarning,
+  LatestDataDate: formatShanghaiDate(securityData.history.at(-1)!.dateMs),
   LastUpdatedUtc: new Date().toISOString(),
 });
+
+const toCandidate = (item: WatchlistItemSummaryDto): WatchlistSearchCandidateDto => ({
+  ThsCode: item.ThsCode,
+  Code: item.Code,
+  Name: item.Name,
+  AssetType: item.AssetType,
+  SecurityType: item.SecurityType,
+});
+
+const refreshWatchlistItem = async (item: WatchlistItemSummaryDto): Promise<WatchlistItemSummaryDto> => {
+  try {
+    const candidate = toCandidate(item);
+    const securityData = await getSecurityData(candidate, '1y');
+    if (!securityData || securityData.history.length === 0) {
+      return item;
+    }
+
+    const { maxDrawdown } = calculateDrawdown(securityData.history);
+    return toSummary(candidate, securityData, maxDrawdown);
+  } catch {
+    return item;
+  }
+};
+
+const refreshWatchlistItems = async (items: WatchlistItemSummaryDto[]) => {
+  const refreshedItems = [...items];
+  let nextIndex = 0;
+  const workerCount = Math.min(4, items.length);
+
+  await Promise.all(
+    Array.from({ length: workerCount }, async () => {
+      while (nextIndex < items.length) {
+        const index = nextIndex;
+        nextIndex += 1;
+        refreshedItems[index] = await refreshWatchlistItem(items[index]);
+      }
+    })
+  );
+
+  return refreshedItems;
+};
 
 const SearchWatchlistCandidates = async (
   request: SearchWatchlistCandidatesRequestDto
@@ -328,10 +470,10 @@ const SearchWatchlistCandidates = async (
       };
     })
     .filter((item): item is WatchlistSearchCandidateDto => item !== null)
-    .sort((left, right) => (
-      (left.Code === query ? 0 : 1) - (right.Code === query ? 0 : 1) ||
-      left.Name.localeCompare(right.Name)
-    ));
+    .sort(
+      (left, right) =>
+        (left.Code === query ? 0 : 1) - (right.Code === query ? 0 : 1) || left.Name.localeCompare(right.Name)
+    );
   const inferredIndexes = await searchStandardIndexesByTicker(query);
   const existingCodes = new Set(candidates.map((candidate) => candidate.ThsCode));
   const allCandidates = [
@@ -345,16 +487,19 @@ const SearchWatchlistCandidates = async (
   };
 };
 
-const GetWatchlist = async (
-  _request: GetWatchlistRequestDto
-): Promise<GetWatchlistResponseDto> => {
+const GetWatchlist = async (_request: GetWatchlistRequestDto): Promise<GetWatchlistResponseDto> => {
   void _request;
-  return { Items: readStoredItems() };
+  const items = readStoredItems();
+  if (items.length === 0) {
+    return { Items: [] };
+  }
+
+  const refreshedItems = await refreshWatchlistItems(items);
+  writeStoredItems(refreshedItems);
+  return { Items: refreshedItems };
 };
 
-const AddWatchlistItem = async (
-  request: AddWatchlistItemRequestDto
-): Promise<AddWatchlistItemResponseDto> => {
+const AddWatchlistItem = async (request: AddWatchlistItemRequestDto): Promise<AddWatchlistItemResponseDto> => {
   const items = readStoredItems();
   const existing = items.find((item) => item.ThsCode === request.ThsCode);
   if (existing) {
@@ -384,9 +529,7 @@ const AddWatchlistItem = async (
   return { Success: true, AlreadyExists: false, Message: '添加成功', Item: item };
 };
 
-const DeleteWatchlistItem = async (
-  request: DeleteWatchlistItemRequestDto
-): Promise<OperationResultDto> => {
+const DeleteWatchlistItem = async (request: DeleteWatchlistItemRequestDto): Promise<OperationResultDto> => {
   const items = readStoredItems();
   const nextItems = items.filter((item) => item.ThsCode !== request.ThsCode);
   if (nextItems.length === items.length) return { Success: false, Message: '未找到该标的。' };
@@ -397,9 +540,10 @@ const DeleteWatchlistItem = async (
 const GetWatchlistItemDetail = async (
   request: GetWatchlistItemDetailRequestDto
 ): Promise<GetWatchlistItemDetailResponseDto> => {
-  const selectedRange = RANGE_OPTIONS.some((option) => option.Value === request.Range)
-    ? request.Range
-    : '1y';
+  const selectedRange = RANGE_OPTIONS.some((option) => option.Value === request.Range) ? request.Range : '1y';
+  const rangeTimestamps = getRangeTimestamps(selectedRange, request.StartDate, request.EndDate);
+  const rangeStartDate = formatShanghaiDate(rangeTimestamps.start);
+  const rangeEndDate = formatShanghaiDate(rangeTimestamps.end);
   const item = readStoredItems().find((watchlistItem) => watchlistItem.ThsCode === request.ThsCode);
 
   if (!item) {
@@ -408,28 +552,31 @@ const GetWatchlistItemDetail = async (
       Message: '未找到该标的。',
       Item: null,
       SelectedRange: selectedRange,
+      RangeStartDate: rangeStartDate,
+      RangeEndDate: rangeEndDate,
       AvailableRanges: RANGE_OPTIONS,
       DrawdownSeries: [],
     };
   }
 
-  const candidate: WatchlistSearchCandidateDto = {
-    ThsCode: item.ThsCode,
-    Code: item.Code,
-    Name: item.Name,
-    AssetType: item.AssetType,
-    SecurityType: item.SecurityType,
-  };
-  const securityData = await getSecurityData(candidate, selectedRange, {
-    startDate: request.StartDate,
-    endDate: request.EndDate,
-  });
+  const candidate = toCandidate(item);
+  const securityData = await getSecurityData(
+    candidate,
+    selectedRange,
+    {
+      startDate: request.StartDate,
+      endDate: request.EndDate,
+    },
+    rangeTimestamps
+  );
   if (!securityData || securityData.history.length === 0) {
     return {
       Success: false,
       Message: '当前周期的数据暂不可用。',
       Item: item,
       SelectedRange: selectedRange,
+      RangeStartDate: rangeStartDate,
+      RangeEndDate: rangeEndDate,
       AvailableRanges: RANGE_OPTIONS,
       DrawdownSeries: [],
     };
@@ -440,6 +587,8 @@ const GetWatchlistItemDetail = async (
     Message: 'ok',
     Item: item,
     SelectedRange: selectedRange,
+    RangeStartDate: rangeStartDate,
+    RangeEndDate: rangeEndDate,
     AvailableRanges: RANGE_OPTIONS,
     DrawdownSeries: calculateDrawdown(securityData.history).series,
   };
