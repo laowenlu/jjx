@@ -77,7 +77,7 @@ describe('场外基金价格口径', () => {
       EndDate: '2026-09-29',
     });
 
-    expect(detail.DrawdownSeries).toEqual([{ Date: '2026-09-29', Price: 5.2, Drawdown: 0 }]);
+    expect(detail.DrawdownSeries).toEqual([{ Date: '2026-09-29', Price: 5.2, Drawdown: 0, Gain: 0 }]);
   });
 
   it('单位净值缺失时不将复权净值冒充为价格', async () => {
@@ -87,6 +87,91 @@ describe('场外基金价格口径', () => {
 
     expect(result.Success).toBe(false);
     expect(result.Item).toBeNull();
+  });
+});
+
+describe('涨幅计算', () => {
+  const mockPrices = (prices: number[], adjustedPrices = prices) =>
+    mockCollection(
+      prices.map((price, index) => ({
+        nav_date: Date.parse(`2026-09-${String(index + 1).padStart(2, '0')}T00:00:00+08:00`),
+        unit_nav: price,
+        adj_nav: adjustedPrices[index],
+      }))
+    );
+
+  it('按此前最低价计算每日涨幅，保留曾经出现的最大涨幅', async () => {
+    mockPrices([100, 80, 120, 90, 60, 90, 75]);
+    const added = await WatchlistManager.AddWatchlistItem(fund);
+    const detail = await WatchlistManager.GetWatchlistItemDetail({ ThsCode: fund.ThsCode, Range: '1y' });
+
+    expect(added.Item?.MaxGain).toBeCloseTo(0.5);
+    expect(detail.DrawdownSeries.map((point) => point.Gain)).toEqual([0, 0, 0.5, 0.125, 0, 0.5, 0.25]);
+    expect(detail.DrawdownSeries.at(-1)?.Drawdown).toBeCloseTo(75 / 120 - 1);
+    expect(added.Item?.MaxDrawdown).toBeCloseTo(-0.5);
+    expect(JSON.parse(localStorage.getItem('jjx.watchlist')!)[0].MaxGain).toBeCloseTo(0.5);
+  });
+
+  it.each([[100, 90, 80], [100, 100, 100], [100], [0, 0]])('价格序列 %j 没有上涨时涨幅为零', async (...prices) => {
+    mockPrices(prices);
+    const added = await WatchlistManager.AddWatchlistItem(fund);
+    const detail = await WatchlistManager.GetWatchlistItemDetail({ ThsCode: fund.ThsCode, Range: '1y' });
+
+    expect(added.Item?.MaxGain).toBe(0);
+    expect(detail.DrawdownSeries.every((point) => point.Gain === 0)).toBe(true);
+  });
+
+  it('先出现的高价不能作为之后低价的涨幅终点', async () => {
+    mockPrices([120, 100, 80, 100]);
+    const added = await WatchlistManager.AddWatchlistItem(fund);
+
+    expect(added.Item?.MaxGain).toBeCloseTo(0.25);
+  });
+
+  it('基金涨幅使用复权净值，价格仍显示单位净值', async () => {
+    mockPrices([2, 1, 1.1], [2, 2, 2.2]);
+    const added = await WatchlistManager.AddWatchlistItem(fund);
+    const detail = await WatchlistManager.GetWatchlistItemDetail({ ThsCode: fund.ThsCode, Range: '1y' });
+
+    expect(added.Item?.MaxGain).toBeCloseTo(0.1);
+    expect(detail.DrawdownSeries.map((point) => point.Price)).toEqual([2, 1, 1.1]);
+    expect(detail.DrawdownSeries[1].Gain).toBe(0);
+    expect(detail.DrawdownSeries[2].Gain).toBeCloseTo(0.1);
+  });
+
+  it('自定义日期范围重新计算最低价，不沿用范围外的低点', async () => {
+    mockPrices([50, 100, 120]);
+    const added = await WatchlistManager.AddWatchlistItem(fund);
+    const detail = await WatchlistManager.GetWatchlistItemDetail({
+      ThsCode: fund.ThsCode,
+      Range: 'custom',
+      StartDate: '2026-09-02',
+      EndDate: '2026-09-03',
+    });
+
+    expect(added.Item?.MaxGain).toBeCloseTo(1.4);
+    expect(detail.DrawdownSeries).toHaveLength(2);
+    expect(detail.DrawdownSeries[0].Gain).toBe(0);
+    expect(detail.DrawdownSeries[1].Gain).toBeCloseTo(0.2);
+  });
+
+  it('刷新旧缓存时补充最大涨幅并保存', async () => {
+    localStorage.setItem('jjx.watchlist', JSON.stringify([{ ...fund, CurrentPrice: 100 }]));
+    mockPrices([100, 120]);
+
+    const result = await WatchlistManager.GetWatchlist({});
+
+    expect(result.Items[0].MaxGain).toBeCloseTo(0.2);
+    expect(JSON.parse(localStorage.getItem('jjx.watchlist')!)[0].MaxGain).toBeCloseTo(0.2);
+  });
+
+  it('旧缓存刷新失败时显示缺失的涨幅，不伪造零值', async () => {
+    localStorage.setItem('jjx.watchlist', JSON.stringify([{ ...fund, CurrentPrice: 100 }]));
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('offline')));
+
+    const result = await WatchlistManager.GetWatchlist({});
+
+    expect(result.Items[0].MaxGain).toBeNull();
   });
 });
 

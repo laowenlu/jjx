@@ -25,6 +25,7 @@ export interface DrawdownPointDto {
   Date: string;
   Price: number;
   Drawdown: number;
+  Gain: number;
 }
 
 export interface DrawdownRangeOptionDto {
@@ -32,8 +33,7 @@ export interface DrawdownRangeOptionDto {
   Label: string;
 }
 
-export interface GetSessionRequestDto {
-}
+export interface GetSessionRequestDto {}
 
 export interface GetWatchlistItemDetailRequestDto {
   ThsCode: string;
@@ -53,8 +53,7 @@ export interface GetWatchlistItemDetailResponseDto {
   DrawdownSeries: DrawdownPointDto[];
 }
 
-export interface GetWatchlistRequestDto {
-}
+export interface GetWatchlistRequestDto {}
 
 export interface GetWatchlistResponseDto {
   Items: WatchlistItemSummaryDto[];
@@ -178,6 +177,7 @@ export interface WatchlistItemSummaryDto {
   AssetType: string;
   CurrentPrice: number | null;
   MaxDrawdown: number | null;
+  MaxGain: number | null;
   DataWarning: string | null;
   LatestDataDate: string;
   LastUpdatedUtc: string;

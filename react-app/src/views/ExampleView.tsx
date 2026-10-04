@@ -24,7 +24,7 @@ type ChartPoint = {
   x: number;
   y: number;
   label: string;
-  drawdown: number;
+  value: number;
   price: number;
 };
 
@@ -86,7 +86,7 @@ const DateRangePicker = ({ range, open, onOpenChange, onConfirm }: DateRangePick
       <DialogContent className="w-auto max-w-[calc(100%-2rem)] gap-3 p-4 sm:max-w-none">
         <DialogHeader>
           <DialogTitle>选择起止日期</DialogTitle>
-          <DialogDescription className="sr-only">选择回撤曲线的开始日期和结束日期。</DialogDescription>
+          <DialogDescription className="sr-only">选择回撤与涨幅曲线的开始日期和结束日期。</DialogDescription>
         </DialogHeader>
         <Calendar
           mode="range"
@@ -142,7 +142,7 @@ const formatPrice = (value: number | null) => {
   return String(value);
 };
 
-const formatDrawdown = (value: number | null) => {
+const formatPercent = (value: number | null) => {
   if (value === null) {
     return '—';
   }
@@ -167,7 +167,8 @@ const getNiceTickStep = (roughStep: number) => {
   return niceNormalized * magnitude;
 };
 
-const getChartY = (drawdown: number, domainBottom: number) => CHART_TOP + (drawdown / domainBottom) * CHART_HEIGHT;
+const getChartY = (value: number, domainLimit: number) =>
+  CHART_TOP + (domainLimit > 0 ? 1 - value / domainLimit : value / domainLimit) * CHART_HEIGHT;
 
 const findClosestPointIndex = (points: ChartPoint[], targetX: number) => {
   let low = 0;
@@ -191,15 +192,20 @@ const findClosestPointIndex = (points: ChartPoint[], targetX: number) => {
 
 const WatchlistChart = ({
   series,
+  metric,
   rangeLabel,
   dateRange,
   onDateRangeOpen,
 }: {
   series: DrawdownPointDto[];
+  metric: 'Drawdown' | 'Gain';
   rangeLabel: string;
   dateRange: DetailDateRange;
   onDateRangeOpen: () => void;
 }) => {
+  const isGain = metric === 'Gain';
+  const metricLabel = isGain ? '涨幅' : '回撤';
+  const gradientId = isGain ? 'gain-area-gradient' : 'drawdown-area-gradient';
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
 
   useEffect(() => {
@@ -207,31 +213,37 @@ const WatchlistChart = ({
   }, [series]);
 
   const latest = series.at(-1);
-  const worstIndex = useMemo(() => {
+  const extremeIndex = useMemo(() => {
     if (series.length === 0) {
       return -1;
     }
 
     return series.reduce(
-      (currentWorstIndex, item, index) =>
-        item.Drawdown < series[currentWorstIndex].Drawdown ? index : currentWorstIndex,
+      (currentExtremeIndex, item, index) =>
+        (
+          isGain
+            ? item[metric] > series[currentExtremeIndex][metric]
+            : item[metric] < series[currentExtremeIndex][metric]
+        )
+          ? index
+          : currentExtremeIndex,
       0
     );
-  }, [series]);
-  const worst = worstIndex >= 0 ? series[worstIndex] : null;
+  }, [isGain, metric, series]);
+  const extreme = extremeIndex >= 0 ? series[extremeIndex] : null;
 
   const chartScale = useMemo(() => {
-    const minimumDepth = 0.01;
-    const deepestDrawdown = Math.max(Math.abs(worst?.Drawdown ?? 0), minimumDepth);
-    const tickStep = getNiceTickStep(deepestDrawdown / 4);
-    const tickCount = Math.max(1, Math.ceil(deepestDrawdown / tickStep));
-    const domainBottom = -(tickCount * tickStep);
+    const minimumMagnitude = 0.01;
+    const maximumMagnitude = Math.max(Math.abs(extreme?.[metric] ?? 0), minimumMagnitude);
+    const tickStep = getNiceTickStep(maximumMagnitude / 4);
+    const tickCount = Math.max(1, Math.ceil(maximumMagnitude / tickStep));
+    const domainLimit = (isGain ? 1 : -1) * tickCount * tickStep;
 
     return {
-      domainBottom,
-      yTicks: Array.from({ length: tickCount + 1 }, (_, index) => -(index * tickStep)),
+      domainLimit,
+      yTicks: Array.from({ length: tickCount + 1 }, (_, index) => (isGain ? 1 : -1) * index * tickStep),
     };
-  }, [worst]);
+  }, [extreme, isGain, metric]);
 
   const points = useMemo<ChartPoint[]>(() => {
     if (series.length === 0) {
@@ -251,17 +263,18 @@ const WatchlistChart = ({
           : series.length === 1
             ? CHART_WIDTH / 2
             : (index / (series.length - 1)) * CHART_WIDTH),
-      y: getChartY(item.Drawdown, chartScale.domainBottom),
+      y: getChartY(item[metric], chartScale.domainLimit),
       label: item.Date,
-      drawdown: item.Drawdown,
+      value: item[metric],
       price: item.Price,
     }));
-  }, [chartScale.domainBottom, series]);
+  }, [chartScale.domainLimit, metric, series]);
 
   const path = points.map((point, index) => `${index === 0 ? 'M' : 'L'} ${point.x} ${point.y}`).join(' ');
+  const baselineY = getChartY(0, chartScale.domainLimit);
   const areaPath =
     points.length > 0
-      ? `M ${points[0].x} ${CHART_TOP} L ${points.map((point) => `${point.x} ${point.y}`).join(' L ')} L ${points.at(-1)!.x} ${CHART_TOP} Z`
+      ? `M ${points[0].x} ${baselineY} L ${points.map((point) => `${point.x} ${point.y}`).join(' L ')} L ${points.at(-1)!.x} ${baselineY} Z`
       : '';
 
   const xTicks = useMemo(() => {
@@ -283,7 +296,7 @@ const WatchlistChart = ({
   }, [points, series]);
 
   const activePoint = activeIndex !== null ? (points[activeIndex] ?? null) : null;
-  const worstPoint = worstIndex >= 0 ? points[worstIndex] : null;
+  const extremePoint = extremeIndex >= 0 ? points[extremeIndex] : null;
 
   const updateActivePoint = (clientX: number, element: HTMLDivElement) => {
     if (points.length === 0) {
@@ -298,41 +311,60 @@ const WatchlistChart = ({
   return (
     <div className="space-y-5">
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <p className="text-xs text-muted-foreground">{rangeLabel}回撤曲线</p>
-          <button
-            type="button"
-            onClick={onDateRangeOpen}
-            className="mt-1 text-left text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            aria-label="选择起止日期"
-          >
-            {dateRange.StartDate} — {dateRange.EndDate}
-          </button>
-          <p className="mt-1 text-xs text-muted-foreground">实际数据截至 {series.at(-1)?.Date}</p>
-        </div>
-        <div className="flex items-center gap-2 text-xs text-muted-foreground">
-          <span className="inline-block size-2 rounded-full bg-sky-500" />
-          回撤率
-        </div>
+        {!isGain ? (
+          <div>
+            <p className="text-xs text-muted-foreground">
+              {rangeLabel}
+              {metricLabel}曲线
+            </p>
+            <button
+              type="button"
+              onClick={onDateRangeOpen}
+              className="mt-1 text-left text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              aria-label="选择起止日期"
+            >
+              {dateRange.StartDate} — {dateRange.EndDate}
+            </button>
+            <p className="mt-1 text-xs text-muted-foreground">实际数据截至 {series.at(-1)?.Date}</p>
+          </div>
+        ) : null}
+        {!isGain && (
+          <div className="ml-auto flex items-center gap-2 text-xs text-muted-foreground">
+            <span className="inline-block size-2 rounded-full bg-sky-500" />
+            回撤率
+          </div>
+        )}
       </div>
 
-      <div className="grid grid-cols-3 divide-x divide-border/70 rounded-xl border border-border/80 bg-background/80">
+      <div
+        className={cn(
+          'grid divide-x divide-border/70 rounded-xl border border-border/80 bg-background/80',
+          isGain ? 'grid-cols-2' : 'grid-cols-3'
+        )}
+      >
         <div className="min-w-0 px-3 py-3 sm:px-4">
-          <div className="text-[11px] text-muted-foreground">当前回撤</div>
+          <div className="text-[11px] text-muted-foreground">当前{metricLabel}</div>
           <div className="mt-1 truncate text-lg font-semibold tabular-nums">
-            {formatDrawdown(latest?.Drawdown ?? null)}
+            {formatPercent(latest?.[metric] ?? null)}
           </div>
         </div>
         <div className="min-w-0 px-3 py-3 sm:px-4">
-          <div className="text-[11px] text-muted-foreground">最大回撤</div>
-          <div className="mt-1 truncate text-lg font-semibold text-emerald-600 tabular-nums dark:text-emerald-400">
-            {formatDrawdown(worst?.Drawdown ?? null)}
+          <div className="text-[11px] text-muted-foreground">最大{metricLabel}</div>
+          <div
+            className={cn(
+              'mt-1 truncate text-lg font-semibold tabular-nums',
+              isGain ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'
+            )}
+          >
+            {formatPercent(extreme?.[metric] ?? null)}
           </div>
         </div>
-        <div className="min-w-0 px-3 py-3 sm:px-4">
-          <div className="text-[11px] text-muted-foreground">最新价格</div>
-          <div className="mt-1 truncate text-lg font-semibold tabular-nums">{formatPrice(latest?.Price ?? null)}</div>
-        </div>
+        {!isGain ? (
+          <div className="min-w-0 px-3 py-3 sm:px-4">
+            <div className="text-[11px] text-muted-foreground">最新价格</div>
+            <div className="mt-1 truncate text-lg font-semibold tabular-nums">{formatPrice(latest?.Price ?? null)}</div>
+          </div>
+        ) : null}
       </div>
 
       <div className="rounded-xl border border-border/80 bg-background p-3 sm:p-4">
@@ -342,7 +374,7 @@ const WatchlistChart = ({
               <div
                 key={tick}
                 className="absolute right-0 -translate-y-1/2"
-                style={{ top: `${getChartY(tick, chartScale.domainBottom)}%` }}
+                style={{ top: `${getChartY(tick, chartScale.domainLimit)}%` }}
               >
                 {formatAxisPercent(tick)}
               </div>
@@ -353,13 +385,13 @@ const WatchlistChart = ({
             <div
               className="relative h-72 cursor-crosshair touch-pan-y select-none rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
               role="slider"
-              aria-label="回撤曲线，使用左右方向键查看每日数据"
+              aria-label={`${metricLabel}曲线，使用左右方向键查看每日数据`}
               aria-valuemin={0}
               aria-valuemax={Math.max(points.length - 1, 0)}
               aria-valuenow={activeIndex ?? 0}
               aria-valuetext={
                 activePoint
-                  ? `${activePoint.label}，价格 ${formatPrice(activePoint.price)}，回撤 ${formatDrawdown(activePoint.drawdown)}`
+                  ? `${activePoint.label}，价格 ${formatPrice(activePoint.price)}，${metricLabel} ${formatPercent(activePoint.value)}`
                   : undefined
               }
               tabIndex={0}
@@ -385,12 +417,12 @@ const WatchlistChart = ({
                 className="absolute inset-0 size-full overflow-visible"
                 preserveAspectRatio="none"
                 role="img"
-                aria-label="回撤曲线图"
+                aria-label={`${metricLabel}曲线图`}
               >
                 <defs>
-                  <linearGradient id="drawdown-area-gradient" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor="rgb(14 165 233)" stopOpacity="0.06" />
-                    <stop offset="100%" stopColor="rgb(14 165 233)" stopOpacity="0.3" />
+                  <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="rgb(14 165 233)" stopOpacity={isGain ? 0.3 : 0.06} />
+                    <stop offset="100%" stopColor="rgb(14 165 233)" stopOpacity={isGain ? 0.06 : 0.3} />
                   </linearGradient>
                 </defs>
 
@@ -398,9 +430,9 @@ const WatchlistChart = ({
                   <line
                     key={tick}
                     x1={CHART_LEFT}
-                    y1={getChartY(tick, chartScale.domainBottom)}
+                    y1={getChartY(tick, chartScale.domainLimit)}
                     x2={CHART_LEFT + CHART_WIDTH}
-                    y2={getChartY(tick, chartScale.domainBottom)}
+                    y2={getChartY(tick, chartScale.domainLimit)}
                     className={index === 0 ? 'stroke-border' : 'stroke-border/60'}
                     strokeDasharray={index === 0 ? undefined : '3 3'}
                     strokeWidth={index === 0 ? '1' : '0.7'}
@@ -422,7 +454,7 @@ const WatchlistChart = ({
                   />
                 ))}
 
-                {areaPath ? <path d={areaPath} fill="url(#drawdown-area-gradient)" /> : null}
+                {areaPath ? <path d={areaPath} fill={`url(#${gradientId})`} /> : null}
 
                 {path ? (
                   <path
@@ -462,11 +494,11 @@ const WatchlistChart = ({
                 ) : null}
               </svg>
 
-              {worstPoint ? (
+              {extremePoint ? (
                 <div
                   className="pointer-events-none absolute size-2 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-background bg-destructive shadow-sm"
-                  style={{ left: `${worstPoint.x}%`, top: `${worstPoint.y}%` }}
-                  title={`最大回撤 ${formatDrawdown(worstPoint.drawdown)}`}
+                  style={{ left: `${extremePoint.x}%`, top: `${extremePoint.y}%` }}
+                  title={`最大${metricLabel} ${formatPercent(extremePoint.value)}`}
                 />
               ) : null}
 
@@ -492,9 +524,9 @@ const WatchlistChart = ({
                     <div className="mt-1.5 grid grid-cols-2 gap-x-4 gap-y-1 tabular-nums text-muted-foreground">
                       <span>价格</span>
                       <span className="text-right text-popover-foreground">{formatPrice(activePoint.price)}</span>
-                      <span>回撤</span>
+                      <span>{metricLabel}</span>
                       <span className="text-right font-medium text-destructive">
-                        {formatDrawdown(activePoint.drawdown)}
+                        {formatPercent(activePoint.value)}
                       </span>
                     </div>
                   </div>
@@ -523,11 +555,11 @@ const WatchlistChart = ({
           </div>
         </div>
 
-        {worst ? (
+        {extreme ? (
           <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-border/70 pt-3 text-xs text-muted-foreground">
-            <span>红点为区间最大回撤</span>
+            <span>红点为区间最大{metricLabel}</span>
             <span className="tabular-nums">
-              {worst.Date} · {formatDrawdown(worst.Drawdown)}
+              {extreme.Date} · {formatPercent(extreme[metric])}
             </span>
           </div>
         ) : null}
@@ -720,7 +752,7 @@ const HomeView = () => {
         }
 
         setFeedbackTone('error');
-        setFeedback('加载回撤曲线失败。');
+        setFeedback('加载回撤与涨幅曲线失败。');
         setSeries([]);
       } finally {
         if (detailRequestCodeRef.current === requestKey) {
@@ -912,7 +944,7 @@ const HomeView = () => {
                         </Button>
                       </div>
 
-                      <div className="grid grid-cols-2 gap-2 text-sm sm:grid-cols-3">
+                      <div className="grid grid-cols-[minmax(0,0.6fr)_repeat(2,minmax(0,1fr))_auto] gap-2 text-xs sm:text-sm">
                         <div>
                           <div className="text-xs text-muted-foreground">现价</div>
                           <div className="mt-1 font-medium">{formatPrice(item.CurrentPrice)}</div>
@@ -920,10 +952,16 @@ const HomeView = () => {
                         <div>
                           <div className="text-xs text-muted-foreground">近1年最大回撤</div>
                           <div className="mt-1 font-medium text-emerald-600 dark:text-emerald-400">
-                            {formatDrawdown(item.MaxDrawdown)}
+                            {formatPercent(item.MaxDrawdown)}
                           </div>
                         </div>
                         <div>
+                          <div className="text-xs text-muted-foreground">近1年最大涨幅</div>
+                          <div className="mt-1 font-medium text-red-600 dark:text-red-400">
+                            {formatPercent(item.MaxGain ?? null)}
+                          </div>
+                        </div>
+                        <div className="whitespace-nowrap">
                           <div className="text-xs text-muted-foreground">最新数据日期</div>
                           <div className="mt-1 font-medium">{item.LatestDataDate ?? '—'}</div>
                         </div>
@@ -943,7 +981,7 @@ const HomeView = () => {
             {/* 图表头 */}
             <CardHeader>
               <div className="flex flex-wrap items-center justify-between gap-3">
-                <CardTitle>{selectedItem ? `${selectedItem.Name} · ${selectedItem.Code}` : '回撤详情'}</CardTitle>
+                <CardTitle>{selectedItem ? `${selectedItem.Name} · ${selectedItem.Code}` : '回撤与涨幅详情'}</CardTitle>
                 {selectedItem ? (
                   <div className="flex items-center gap-2">
                     <DateRangePicker
@@ -981,18 +1019,28 @@ const HomeView = () => {
             {/* 图表 */}
             <CardContent>
               {!selectedItem ? (
-                <div className="py-16 text-sm text-muted-foreground">选择一个标的后查看回撤曲线。</div>
+                <div className="py-16 text-sm text-muted-foreground">选择一个标的后查看回撤与涨幅曲线。</div>
               ) : isDetailLoading ? (
                 <div className="py-16 text-sm text-muted-foreground">曲线加载中…</div>
               ) : series.length === 0 ? (
-                <div className="py-16 text-sm text-muted-foreground">当前没有可展示的回撤数据。</div>
+                <div className="py-16 text-sm text-muted-foreground">当前没有可展示的回撤与涨幅数据。</div>
               ) : detailDateRange ? (
-                <WatchlistChart
-                  series={series}
-                  rangeLabel={selectedRangeLabel}
-                  dateRange={detailDateRange}
-                  onDateRangeOpen={handleDateRangeOpen}
-                />
+                <div className="space-y-6">
+                  <WatchlistChart
+                    series={series}
+                    metric="Drawdown"
+                    rangeLabel={selectedRangeLabel}
+                    dateRange={detailDateRange}
+                    onDateRangeOpen={handleDateRangeOpen}
+                  />
+                  <WatchlistChart
+                    series={series}
+                    metric="Gain"
+                    rangeLabel={selectedRangeLabel}
+                    dateRange={detailDateRange}
+                    onDateRangeOpen={handleDateRangeOpen}
+                  />
+                </div>
               ) : (
                 <div className="py-16 text-sm text-muted-foreground">曲线加载中…</div>
               )}

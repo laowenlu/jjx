@@ -118,7 +118,9 @@ const readStoredItems = (): WatchlistItemSummaryDto[] => {
 
   try {
     const parsed = JSON.parse(stored) as unknown;
-    return Array.isArray(parsed) ? (parsed as WatchlistItemSummaryDto[]) : [];
+    return Array.isArray(parsed)
+      ? (parsed as WatchlistItemSummaryDto[]).map((item) => ({ ...item, MaxGain: item.MaxGain ?? null }))
+      : [];
   } catch {
     localStorage.removeItem(WATCHLIST_STORAGE_KEY);
     return [];
@@ -327,7 +329,7 @@ const getSecurityData = async (
         return {
           dateMs,
           price,
-          // 单位净值用于展示，复权净值用于消除分红对回撤计算的影响。
+          // 单位净值用于展示，复权净值用于消除分红对回撤和涨幅计算的影响。
           drawdownPrice: adjustedNav ?? undefined,
         };
       })
@@ -350,7 +352,7 @@ const getSecurityData = async (
     return {
       currentPrice,
       history: filteredHistory,
-      dataWarning: candidate.AssetType === 'fund-lof' ? '现价为场内最新成交价，回撤曲线基于基金净值口径。' : null,
+      dataWarning: candidate.AssetType === 'fund-lof' ? '现价为场内最新成交价，回撤与涨幅曲线基于基金净值口径。' : null,
     };
   }
 
@@ -368,27 +370,36 @@ const getSecurityData = async (
   };
 };
 
-const calculateDrawdown = (history: HistoricalBar[]) => {
+const calculatePerformance = (history: HistoricalBar[]) => {
   let peak = 0;
+  let trough = Infinity;
   let maxDrawdown = 0;
+  let maxGain = 0;
   const series = history.map((point) => {
     const drawdownPrice = point.drawdownPrice ?? point.price;
     peak = Math.max(peak, drawdownPrice);
     const drawdown = peak === 0 ? 0 : drawdownPrice / peak - 1;
     maxDrawdown = Math.min(maxDrawdown, drawdown);
+    if (drawdownPrice > 0) {
+      trough = Math.min(trough, drawdownPrice);
+    }
+    const gain = drawdownPrice > 0 && Number.isFinite(trough) ? drawdownPrice / trough - 1 : 0;
+    maxGain = Math.max(maxGain, gain);
     return {
       Date: formatShanghaiDate(point.dateMs),
       Price: point.price,
       Drawdown: drawdown,
+      Gain: gain,
     };
   });
-  return { maxDrawdown, series };
+  return { maxDrawdown, maxGain, series };
 };
 
 const toSummary = (
   candidate: WatchlistSearchCandidateDto,
   securityData: SecurityData,
-  maxDrawdown: number
+  maxDrawdown: number,
+  maxGain: number
 ): WatchlistItemSummaryDto => ({
   ThsCode: candidate.ThsCode,
   Code: candidate.Code,
@@ -397,6 +408,7 @@ const toSummary = (
   AssetType: candidate.AssetType,
   CurrentPrice: securityData.currentPrice,
   MaxDrawdown: maxDrawdown,
+  MaxGain: maxGain,
   DataWarning: securityData.dataWarning,
   LatestDataDate: formatShanghaiDate(securityData.history.at(-1)!.dateMs),
   LastUpdatedUtc: new Date().toISOString(),
@@ -418,8 +430,8 @@ const refreshWatchlistItem = async (item: WatchlistItemSummaryDto): Promise<Watc
       return item;
     }
 
-    const { maxDrawdown } = calculateDrawdown(securityData.history);
-    return toSummary(candidate, securityData, maxDrawdown);
+    const { maxDrawdown, maxGain } = calculatePerformance(securityData.history);
+    return toSummary(candidate, securityData, maxDrawdown, maxGain);
   } catch {
     return item;
   }
@@ -523,8 +535,8 @@ const AddWatchlistItem = async (request: AddWatchlistItemRequestDto): Promise<Ad
     };
   }
 
-  const { maxDrawdown } = calculateDrawdown(securityData.history);
-  const item = toSummary(candidate, securityData, maxDrawdown);
+  const { maxDrawdown, maxGain } = calculatePerformance(securityData.history);
+  const item = toSummary(candidate, securityData, maxDrawdown, maxGain);
   writeStoredItems([item, ...items]);
   return { Success: true, AlreadyExists: false, Message: '添加成功', Item: item };
 };
@@ -590,7 +602,7 @@ const GetWatchlistItemDetail = async (
     RangeStartDate: rangeStartDate,
     RangeEndDate: rangeEndDate,
     AvailableRanges: RANGE_OPTIONS,
-    DrawdownSeries: calculateDrawdown(securityData.history).series,
+    DrawdownSeries: calculatePerformance(securityData.history).series,
   };
 };
 
