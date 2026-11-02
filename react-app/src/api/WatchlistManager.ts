@@ -303,15 +303,17 @@ const getSecurityData = async (
 
   if (candidate.AssetType === 'fund-etf') {
     const [snapshotItems, history] = await Promise.all([
-      getCollectionItems(`/api/fund/market/snapshot?thscode=${encodedCode}`),
+      // 实时快照可能尚未就绪，不能因此丢弃已可用的历史行情。
+      getCollectionItems(`/api/fund/market/snapshot?thscode=${encodedCode}`).catch(() => []),
       getEtfHistoricalBars(encodedCode, rangeTimestamps),
     ]);
 
     if (history.length === 0) return null;
+    const snapshotPrice = readNumber(snapshotItems[0]?.last_price);
     return {
-      currentPrice: readNumber(snapshotItems[0]?.last_price) ?? history[history.length - 1].price,
+      currentPrice: snapshotPrice ?? history[history.length - 1].price,
       history,
-      dataWarning: null,
+      dataWarning: snapshotPrice === null ? '实时行情暂不可用，现价为最新历史收盘价。' : null,
     };
   }
 

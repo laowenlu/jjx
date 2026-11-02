@@ -197,3 +197,98 @@ it('ETF 继续使用场内成交价和收盘价', async () => {
   expect(result.Item?.LatestDataDate).toBe('2026-09-30');
   expect(vi.mocked(fetch).mock.calls.every(([url]) => String(url).includes('/fund/market/'))).toBe(true);
 });
+
+describe('ETF 快照不可用时的历史行情', () => {
+  const etf = {
+    ThsCode: '513100.SH',
+    Code: '513100',
+    Name: '纳指ETF国泰',
+    AssetType: 'fund-etf',
+    SecurityType: 'ETF',
+  };
+  const history = [
+    { date_ms: Date.parse('2026-09-28T00:00:00+08:00'), close_price: 2 },
+    { date_ms: Date.parse('2026-09-29T00:00:00+08:00'), close_price: 1.6 },
+    { date_ms: Date.parse('2026-09-30T00:00:00+08:00'), close_price: 2.4 },
+  ];
+
+  it.each(['not-ready', 'http-error', 'network-error', 'empty', 'missing-price'])(
+    '快照 %s 时仍可添加、刷新并加载回撤与涨幅',
+    async (failure) => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async (input: string) => {
+          if (input.includes('/market/snapshot')) {
+            if (failure === 'network-error') throw new Error('offline');
+            if (failure === 'http-error') return new Response(null, { status: 503 });
+            if (failure === 'not-ready') {
+              return new Response(
+                JSON.stringify({ code: 3002, message: 'Fund market snapshot is not available yet', data: null })
+              );
+            }
+            return new Response(
+              JSON.stringify({ code: 0, data: { item: failure === 'empty' ? [] : [{ last_price: null }] } })
+            );
+          }
+          return new Response(JSON.stringify({ code: 0, data: { item: history } }));
+        })
+      );
+
+      const added = await WatchlistManager.AddWatchlistItem(etf);
+      expect(added.Success).toBe(true);
+      expect(added.Item?.CurrentPrice).toBe(2.4);
+      expect(added.Item?.LatestDataDate).toBe('2026-09-30');
+      expect(added.Item?.DataWarning).toContain('历史收盘价');
+      expect(added.Item?.MaxDrawdown).toBeCloseTo(-0.2);
+      expect(added.Item?.MaxGain).toBeCloseTo(0.5);
+
+      const refreshed = await WatchlistManager.GetWatchlist({});
+      expect(refreshed.Items[0].CurrentPrice).toBe(2.4);
+      const detail = await WatchlistManager.GetWatchlistItemDetail({ ThsCode: etf.ThsCode, Range: '1y' });
+      expect(detail.Success).toBe(true);
+      expect(detail.DrawdownSeries.map((point) => point.Price)).toEqual([2, 1.6, 2.4]);
+      expect(detail.DrawdownSeries[1].Drawdown).toBeCloseTo(-0.2);
+      expect(detail.DrawdownSeries[2].Gain).toBeCloseTo(0.5);
+    }
+  );
+
+  it('快照正常时优先显示实时成交价', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async (input: string) =>
+          new Response(
+            JSON.stringify({
+              code: 0,
+              data: { item: input.includes('/market/snapshot') ? [{ last_price: 2.5 }] : history },
+            })
+          )
+      )
+    );
+
+    const result = await WatchlistManager.AddWatchlistItem(etf);
+    expect(result.Item?.CurrentPrice).toBe(2.5);
+    expect(result.Item?.DataWarning).toBeNull();
+  });
+
+  it('历史接口失败时保留错误，不伪造曲线', async () => {
+    localStorage.setItem('jjx.watchlist', JSON.stringify([etf]));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async (input: string) =>
+          new Response(
+            JSON.stringify(
+              input.includes('/market/snapshot')
+                ? { code: 0, data: { item: [{ last_price: 2.5 }] } }
+                : { code: 3002, message: 'Fund history is not available yet', data: null }
+            )
+          )
+      )
+    );
+
+    await expect(WatchlistManager.GetWatchlistItemDetail({ ThsCode: etf.ThsCode, Range: '1y' })).rejects.toThrow(
+      'Fund history is not available yet'
+    );
+  });
+});

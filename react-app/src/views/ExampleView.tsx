@@ -745,7 +745,9 @@ const HomeView = () => {
           EndDate: response.RangeEndDate,
         });
         setSeries(response.DrawdownSeries);
-        setFeedback((current) => (current === '当前周期的数据暂不可用。' ? '' : current));
+        setFeedback((current) =>
+          current === '当前周期的数据暂不可用。' || current === '加载回撤与涨幅曲线失败。' ? '' : current
+        );
       } catch {
         if (detailRequestCodeRef.current !== requestKey) {
           return;
